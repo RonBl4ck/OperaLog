@@ -11,6 +11,7 @@ interface FrontGridSectionProps {
   fecha: string;
   contratista: string;
   catalogs: CatalogItem[];
+  readOnly?: boolean;
   onChangeRows: (frontId: FrontType, updatedRows: TurnRow[]) => void;
   onPasteSuccess?: (count: number, frontLabel: string) => void;
   onExcelImportSuccess?: (count: number, frontLabel: string) => void;
@@ -35,6 +36,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
   fecha,
   contratista,
   catalogs,
+  readOnly = false,
   onChangeRows,
   onPasteSuccess,
   onExcelImportSuccess,
@@ -88,6 +90,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
   const showActivityColumn = front.hasActivityDropdown || front.fixedActivity !== null;
 
   const handleAddRow = () => {
+    if (readOnly) return;
     const newRow = createEmptyTurnRow(front.id, fecha, contratista, front.fixedActivity);
     onChangeRows(front.id, [...rows, newRow]);
     if (collapsed) {
@@ -96,6 +99,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
   };
 
   const handleDeleteRow = (rowId: string) => {
+    if (readOnly) return;
     onChangeRows(
       front.id,
       rows.filter((r) => r.id !== rowId),
@@ -110,6 +114,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
     >,
     value: string,
   ) => {
+    if (readOnly) return;
     onChangeRows(
       front.id,
       rows.map((r) => (r.id === rowId ? { ...r, [field]: value } : r)),
@@ -117,7 +122,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
   };
 
   const handleApplyScheduleToBlock = (selectedHorario: string) => {
-    if (!selectedHorario || rows.length === 0) return;
+    if (readOnly || !selectedHorario || rows.length === 0) return;
     onChangeRows(
       front.id,
       rows.map((r) => ({ ...r, horario: selectedHorario })),
@@ -128,6 +133,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
     e: React.ClipboardEvent<HTMLInputElement>,
     rowIndex: number,
   ) => {
+    if (readOnly) return;
     const text = e.clipboardData.getData('text/plain');
     if (!text.includes('\t') && !text.includes('\n')) {
       return;
@@ -154,6 +160,10 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
   };
 
   const handleExcelFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (readOnly) {
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -190,7 +200,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
   };
 
   const inputBaseClass =
-    'w-full rounded border bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#3C5A9F]/25 focus:border-[#3C5A9F]';
+    'w-full rounded border bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#3C5A9F]/25 focus:border-[#3C5A9F] disabled:bg-slate-50 disabled:text-slate-600 disabled:cursor-not-allowed';
 
   return (
     <section
@@ -232,11 +242,11 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
             <select
               aria-label={`Aplicar horario a todo el bloque ${front.label}`}
               value=""
-              disabled={rows.length === 0 || horarioOptions.length === 0}
+              disabled={readOnly || rows.length === 0 || horarioOptions.length === 0}
               onChange={(e) => {
                 handleApplyScheduleToBlock(e.target.value);
               }}
-              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-50 focus:outline-none focus:border-[#3C5A9F]"
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:border-[#3C5A9F]"
             >
               <option value="" disabled>
                 Aplicar horario a todo el bloque
@@ -256,6 +266,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
                 type="file"
                 accept=".xlsx,.xls,.csv"
                 aria-label={`Cargar archivo Excel para ${front.label}`}
+                disabled={readOnly}
                 onChange={handleExcelFileChange}
                 className="hidden"
               />
@@ -271,8 +282,9 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
+                disabled={readOnly}
                 title={`Cargar Excel para llenar ${front.label}`}
-                className="tactile-btn inline-flex items-center gap-1 rounded-lg border border-emerald-600/30 bg-emerald-50/70 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100/70"
+                className="tactile-btn inline-flex items-center gap-1 rounded-lg border border-emerald-600/30 bg-emerald-50/70 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100/70 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Upload className="w-3.5 h-3.5" />
                 Cargar Excel
@@ -283,7 +295,8 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
           <button
             type="button"
             onClick={handleAddRow}
-            className="tactile-btn inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold text-[#3C5A9F] border-[#3C5A9F]/30 bg-white hover:bg-[#3C5A9F]/5"
+            disabled={readOnly}
+            className="tactile-btn inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold text-[#3C5A9F] border-[#3C5A9F]/30 bg-white hover:bg-[#3C5A9F]/5 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-3.5 h-3.5" />
             Fila
@@ -296,7 +309,13 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
         <div className="overflow-x-auto">
           {rows.length === 0 ? (
             <div className="px-4 py-6 text-center text-xs" style={{ color: 'var(--pluz-muted)' }}>
-              Sin personal asignado en {front.label}. Haz clic en <strong>+ Fila</strong> para agregar o pega directamente desde Excel.
+              {readOnly ? (
+                <>Sin personal asignado en {front.label}.</>
+              ) : (
+                <>
+                  Sin personal asignado en {front.label}. Haz clic en <strong>+ Fila</strong> para agregar o pega directamente desde Excel.
+                </>
+              )}
             </div>
           ) : (
             <table className="w-full border-collapse text-left">
@@ -337,7 +356,8 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
                         <input
                           type="text"
                           value={row.nombres}
-                          placeholder="Apellidos y Nombres (Ctrl+V Excel)"
+                          disabled={readOnly}
+                          placeholder={readOnly ? '' : 'Apellidos y Nombres (Ctrl+V Excel)'}
                           onChange={(e) =>
                             handleFieldChange(row.id, 'nombres', e.target.value)
                           }
@@ -351,7 +371,8 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
                           <input
                             type="text"
                             value={row.usuario_ssam}
-                            placeholder="Usuario SSAM"
+                            disabled={readOnly}
+                            placeholder={readOnly ? '' : 'Usuario SSAM'}
                             onChange={(e) =>
                               handleFieldChange(row.id, 'usuario_ssam', e.target.value)
                             }
@@ -369,7 +390,8 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
                         <input
                           type="text"
                           value={row.celular}
-                          placeholder="999999999"
+                          disabled={readOnly}
+                          placeholder={readOnly ? '' : '999999999'}
                           onChange={(e) =>
                             handleFieldChange(row.id, 'celular', e.target.value)
                           }
@@ -382,6 +404,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
                           {front.hasActivityDropdown ? (
                             <select
                               value={row.actividad}
+                              disabled={readOnly}
                               onChange={(e) =>
                                 handleFieldChange(row.id, 'actividad', e.target.value)
                               }
@@ -409,6 +432,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
                         <td className="py-1.5 px-2">
                           <select
                             value={row.skill}
+                            disabled={readOnly}
                             onChange={(e) =>
                               handleFieldChange(row.id, 'skill', e.target.value)
                             }
@@ -430,6 +454,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
                       <td className="py-1.5 px-2">
                         <select
                           value={row.horario}
+                          disabled={readOnly}
                           onChange={(e) =>
                             handleFieldChange(row.id, 'horario', e.target.value)
                           }
@@ -456,8 +481,9 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
                         <button
                           type="button"
                           onClick={() => handleDeleteRow(row.id)}
+                          disabled={readOnly}
                           aria-label={`Eliminar fila ${idx + 1} de ${front.label}`}
-                          className="inline-flex items-center justify-center rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-[#E63946]"
+                          className="inline-flex items-center justify-center rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-[#E63946] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-slate-400"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>

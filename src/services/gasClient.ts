@@ -66,6 +66,18 @@ const DEFAULT_CATALOGS: CatalogItem[] = [
   { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'RED + CNX SUBTERRANEA', orden: 2, activo: true },
 ];
 
+export function getTodayIsoDate(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function isPastIsoDate(fecha: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(fecha) && fecha < getTodayIsoDate();
+}
+
 function getYesterdayIsoDate(): string {
   const d = new Date();
   d.setDate(d.getDate() - 1);
@@ -498,6 +510,10 @@ export interface SaveTurnPayload {
 export async function saveTurn(
   payload: SaveTurnPayload,
 ): Promise<{ ok: boolean; savedCount: number }> {
+  if (isPastIsoDate(payload.fecha)) {
+    throw new Error('No se pueden modificar ni guardar registros de días anteriores.');
+  }
+
   if (isDemoMode()) {
     const all = readLocalTurns();
     const filtered = all.filter(

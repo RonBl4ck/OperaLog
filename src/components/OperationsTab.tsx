@@ -6,6 +6,7 @@ import {
   Copy,
   Download,
   Loader2,
+  Lock,
   RefreshCw,
   Save,
   Upload,
@@ -18,7 +19,13 @@ import {
   TurnRow,
   UserSession,
 } from '../types/operalog';
-import { getLastTurn, getTurn, saveTurn } from '../services/gasClient';
+import {
+  getLastTurn,
+  getTodayIsoDate,
+  getTurn,
+  isPastIsoDate,
+  saveTurn,
+} from '../services/gasClient';
 import {
   downloadGeneralExcelTemplate,
   parseGeneralExcelWorkbook,
@@ -38,14 +45,6 @@ const contrataSessionCache = new Map<string, TurnRow[]>();
 
 export function clearOperationsCache(): void {
   contrataSessionCache.clear();
-}
-
-function getTodayIsoDate(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }
 
 export const OperationsTab: React.FC<OperationsTabProps> = ({
@@ -79,6 +78,7 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
   const [cloning, setCloning] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const generalFileInputRef = useRef<HTMLInputElement | null>(null);
+  const isPastDate = isPastIsoDate(fecha);
 
   // Keep non-admin locked to their contratista
   useEffect(() => {
@@ -143,17 +143,22 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
 
   const handleFrontRowsChange = useCallback(
     (frontId: FrontType, updatedFrontRows: TurnRow[]) => {
+      if (isPastDate) return;
       setRows((prev) => {
         const others = prev.filter((r) => r.frente !== frontId);
         return [...others, ...updatedFrontRows];
       });
     },
-    [],
+    [isPastDate],
   );
 
   const handleGeneralExcelUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
+    if (isPastDate) {
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -209,6 +214,14 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
   };
 
   const handleCloneLastTurn = async () => {
+    if (isPastDate) {
+      onToast({
+        type: 'error',
+        title: 'Registro bloqueado',
+        description: 'No se pueden modificar registros de días anteriores.',
+      });
+      return;
+    }
     setCloning(true);
     try {
       const cloned = await getLastTurn(fecha, contratista);
@@ -238,6 +251,14 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
   };
 
   const handleSaveTurn = async () => {
+    if (isPastDate) {
+      onToast({
+        type: 'error',
+        title: 'Registro bloqueado',
+        description: 'No se pueden modificar ni guardar registros de días anteriores.',
+      });
+      return;
+    }
     const nonEmptyRows = rows.filter((r) => {
       const cfg = FRONT_CONFIGS.find((c) => c.id === r.frente);
       const act = cfg?.fixedActivity && r.actividad === cfg.fixedActivity ? '' : r.actividad;
@@ -367,6 +388,7 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
             type="file"
             accept=".xlsx,.xls"
             aria-label="Cargar plantilla Excel general"
+            disabled={isPastDate}
             onChange={handleGeneralExcelUpload}
             className="hidden"
           />
@@ -385,9 +407,13 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
           <button
             type="button"
             onClick={() => generalFileInputRef.current?.click()}
-            disabled={loadingTurn || saving}
-            className="tactile-btn inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/30 bg-emerald-50/70 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100/70 disabled:opacity-50"
-            title="Cargar plantilla Excel general (solo reemplaza las hojas con datos)"
+            disabled={loadingTurn || saving || isPastDate}
+            className="tactile-btn inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/30 bg-emerald-50/70 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100/70 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={
+              isPastDate
+                ? 'Bloqueado para días anteriores'
+                : 'Cargar plantilla Excel general (solo reemplaza las hojas con datos)'
+            }
           >
             <Upload className="w-4 h-4" />
             <span>Cargar Excel</span>
@@ -407,8 +433,9 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
           <button
             type="button"
             onClick={handleCloneLastTurn}
-            disabled={cloning || loadingTurn || saving}
-            className="tactile-btn inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            disabled={cloning || loadingTurn || saving || isPastDate}
+            className="tactile-btn inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            title={isPastDate ? 'Bloqueado para días anteriores' : undefined}
           >
             {cloning ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -421,9 +448,10 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
           <button
             type="button"
             onClick={handleSaveTurn}
-            disabled={saving || loadingTurn || cloning}
+            disabled={saving || loadingTurn || cloning || isPastDate}
             style={{ backgroundColor: 'var(--pluz-primary)' }}
-            className="tactile-btn inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white hover:opacity-95 disabled:opacity-60 shadow-xs"
+            className="tactile-btn inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
+            title={isPastDate ? 'Bloqueado para días anteriores' : undefined}
           >
             {saving ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -435,24 +463,36 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
         </div>
       </div>
 
-      {/* Excel Paste Tip Banner */}
-      <div
-        className="flex items-start gap-3 rounded-xl border px-4 py-3 text-xs sm:text-sm"
-        style={{
-          backgroundColor: '#EEF2FF',
-          borderColor: '#C7D2FE',
-          color: '#1E3A8A',
-        }}
-      >
-        <ClipboardPaste className="w-4 h-4 mt-0.5 shrink-0 text-[#3C5A9F]" />
-        <p>
-          <strong>Pegado rápido desde Excel:</strong> Copia tus filas en Excel y presiona{' '}
-          <kbd className="rounded bg-white/80 px-1.5 py-0.5 font-mono text-xs font-semibold border border-indigo-200">
-            Ctrl+V
-          </kbd>{' '}
-          directamente sobre el campo <strong>Nombres</strong> de cualquier bloque para importar múltiples técnicos automáticamente.
-        </p>
-      </div>
+      {/* Read-only Past Date Banner or Excel Paste Tip Banner */}
+      {isPastDate ? (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs sm:text-sm text-amber-900"
+        >
+          <Lock className="w-4 h-4 mt-0.5 shrink-0 text-amber-700" />
+          <p>
+            <strong>Registro bloqueado (solo lectura):</strong> No se pueden modificar, importar ni guardar registros de días anteriores ({fecha}).
+          </p>
+        </div>
+      ) : (
+        <div
+          className="flex items-start gap-3 rounded-xl border px-4 py-3 text-xs sm:text-sm"
+          style={{
+            backgroundColor: '#EEF2FF',
+            borderColor: '#C7D2FE',
+            color: '#1E3A8A',
+          }}
+        >
+          <ClipboardPaste className="w-4 h-4 mt-0.5 shrink-0 text-[#3C5A9F]" />
+          <p>
+            <strong>Pegado rápido desde Excel:</strong> Copia tus filas en Excel y presiona{' '}
+            <kbd className="rounded bg-white/80 px-1.5 py-0.5 font-mono text-xs font-semibold border border-indigo-200">
+              Ctrl+V
+            </kbd>{' '}
+            directamente sobre el campo <strong>Nombres</strong> de cualquier bloque para importar múltiples técnicos automáticamente.
+          </p>
+        </div>
+      )}
 
       {/* 7 Front Grid Sections */}
       {loadingTurn ? (
@@ -470,6 +510,7 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
               fecha={fecha}
               contratista={contratista}
               catalogs={catalogs}
+              readOnly={isPastDate}
               onChangeRows={handleFrontRowsChange}
               onPasteSuccess={(count, frontLabel) =>
                 onToast({

@@ -186,6 +186,14 @@ function doPost(e) {
       if (!fecha || !contratista || !Array.isArray(rows)) {
         return jsonResponse({ ok: false, error: 'Payload inválido para saveTurn.' });
       }
+      const normalizedFecha = normalizeDateValue(fecha);
+      const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      if (normalizedFecha < today) {
+        return jsonResponse({
+          ok: false,
+          error: 'No se pueden modificar ni guardar registros de días anteriores (' + normalizedFecha + ').',
+        });
+      }
 
       const sheet = getSheet(SHEETS.TURNOS);
       const data = sheet.getDataRange().getValues();

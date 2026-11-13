@@ -1,15 +1,20 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   Building2,
   Calendar,
+  Check,
   CheckCircle2,
+  ChevronDown,
   Download,
   Eye,
   Filter,
   Loader2,
   RefreshCw,
   Search,
-  AlertCircle,
 } from 'lucide-react';
 import {
   FRONT_CONFIGS,
@@ -38,6 +43,165 @@ function escapeCsvCell(value: string): string {
   return s;
 }
 
+type SortColumn =
+  | 'contratista'
+  | 'frente'
+  | 'nombres'
+  | 'usuario_ssam'
+  | 'celular'
+  | 'actividad'
+  | 'skill'
+  | 'horario';
+
+type SortDirection = 'asc' | 'desc';
+
+const TABLE_COLUMNS: { key: SortColumn; label: string }[] = [
+  { key: 'contratista', label: 'Contratista' },
+  { key: 'frente', label: 'Frente' },
+  { key: 'nombres', label: 'Nombres' },
+  { key: 'usuario_ssam', label: 'Usuario SSAM' },
+  { key: 'celular', label: 'Celular' },
+  { key: 'actividad', label: 'Actividad' },
+  { key: 'skill', label: 'Skill' },
+  { key: 'horario', label: 'Horario' },
+];
+
+interface MultiSelectOption {
+  value: string;
+  label: string;
+}
+
+interface MultiSelectDropdownProps {
+  label: string;
+  allLabel: string;
+  icon: React.ReactNode;
+  options: MultiSelectOption[];
+  selectedValues: string[];
+  onChange: (nextValues: string[]) => void;
+}
+
+const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
+  label,
+  allLabel,
+  icon,
+  options,
+  selectedValues,
+  onChange,
+}) => {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [open]);
+
+  const toggleValue = (val: string) => {
+    if (selectedValues.includes(val)) {
+      onChange(selectedValues.filter((v) => v !== val));
+    } else {
+      onChange([...selectedValues, val]);
+    }
+  };
+
+  const summaryText = useMemo(() => {
+    if (selectedValues.length === 0) return allLabel;
+    if (selectedValues.length === 1) {
+      return options.find((o) => o.value === selectedValues[0])?.label ?? selectedValues[0];
+    }
+    return `${selectedValues.length} seleccionadas`;
+  }, [selectedValues, options, allLabel]);
+
+  return (
+    <div ref={containerRef} className="relative flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--pluz-muted)' }}>
+      {icon}
+      <span>{label}:</span>
+      <button
+        type="button"
+        aria-label={`Filtrar por ${label}`}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((prev) => !prev)}
+        className="inline-flex items-center justify-between gap-2 min-w-[175px] max-w-[230px] px-2.5 py-1.5 text-sm rounded-lg border outline-none cursor-pointer"
+        style={{
+          borderColor: selectedValues.length > 0 ? 'var(--pluz-primary)' : 'var(--pluz-border)',
+          color: 'var(--pluz-ink)',
+          backgroundColor: 'var(--pluz-surface)',
+        }}
+      >
+        <span className="truncate font-normal">{summaryText}</span>
+        <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          aria-multiselectable="true"
+          aria-label={`Opciones de ${label}`}
+          className="absolute left-0 top-full mt-1.5 z-30 w-64 rounded-xl border bg-white shadow-lg py-1.5"
+          style={{ borderColor: 'var(--pluz-border)' }}
+        >
+          <div
+            className="flex items-center justify-between px-3 py-1.5 border-b text-[11px] font-semibold"
+            style={{ borderColor: 'var(--pluz-border)' }}
+          >
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              className="text-[#3C5A9F] hover:underline cursor-pointer"
+            >
+              {allLabel}
+            </button>
+            {selectedValues.length > 0 && (
+              <span className="text-slate-400">{selectedValues.length} act.</span>
+            )}
+          </div>
+          <div className="max-h-60 overflow-y-auto py-1">
+            {options.map((opt) => {
+              const checked = selectedValues.includes(opt.value);
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="option"
+                  aria-selected={checked}
+                  onClick={() => toggleValue(opt.value)}
+                  className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-xs hover:bg-slate-50 cursor-pointer"
+                  style={{ color: 'var(--pluz-ink)' }}
+                >
+                  <span
+                    className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                      checked
+                        ? 'bg-[#3C5A9F] border-[#3C5A9F] text-white'
+                        : 'border-slate-300 bg-white'
+                    }`}
+                  >
+                    {checked && <Check className="w-3 h-3" />}
+                  </span>
+                  <span className="truncate">{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
   fecha,
   onFechaChange,
@@ -49,8 +213,37 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
   onSelectedContrataChange,
   onToast,
 }) => {
-  const [selectedFront, setSelectedFront] = useState<string>('ALL');
+  const [selectedContratas, setSelectedContratas] = useState<string[]>(() =>
+    selectedContrata && selectedContrata !== 'ALL' ? [selectedContrata] : [],
+  );
+  const lastEmittedContrataRef = useRef<string>(selectedContrata);
+  const [selectedFronts, setSelectedFronts] = useState<string[]>([]);
   const [search, setSearch] = useState<string>('');
+  const [sortConfig, setSortConfig] = useState<{
+    column: SortColumn;
+    direction: SortDirection;
+  } | null>(null);
+
+  // Sync external selectedContrata changes (e.g. drill-down from ChartsTab)
+  useEffect(() => {
+    if (selectedContrata !== lastEmittedContrataRef.current) {
+      lastEmittedContrataRef.current = selectedContrata;
+      setSelectedContratas(selectedContrata && selectedContrata !== 'ALL' ? [selectedContrata] : []);
+    }
+  }, [selectedContrata]);
+
+  const handleContratasChange = (next: string[]) => {
+    setSelectedContratas(next);
+    const parentValue = next.length === 1 ? next[0] : 'ALL';
+    lastEmittedContrataRef.current = parentValue;
+    onSelectedContrataChange(parentValue);
+  };
+
+  const frontLabelMap = useMemo(() => {
+    const map = new Map<FrontType, string>();
+    for (const cfg of FRONT_CONFIGS) map.set(cfg.id, cfg.label);
+    return map;
+  }, []);
 
   const complianceByContrata = useMemo(() => {
     const counts = new Map<string, number>();
@@ -70,8 +263,8 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
-      if (selectedContrata !== 'ALL' && r.contratista !== selectedContrata) return false;
-      if (selectedFront !== 'ALL' && r.frente !== selectedFront) return false;
+      if (selectedContratas.length > 0 && !selectedContratas.includes(r.contratista)) return false;
+      if (selectedFronts.length > 0 && !selectedFronts.includes(r.frente)) return false;
       if (!q) return true;
       return (
         r.nombres.toLowerCase().includes(q) ||
@@ -82,10 +275,40 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
         r.contratista.toLowerCase().includes(q)
       );
     });
-  }, [rows, selectedContrata, selectedFront, search]);
+  }, [rows, selectedContratas, selectedFronts, search]);
+
+  const sortedRows = useMemo(() => {
+    if (!sortConfig) return filteredRows;
+    const { column, direction } = sortConfig;
+    const multiplier = direction === 'asc' ? 1 : -1;
+
+    return [...filteredRows].sort((a, b) => {
+      const valA =
+        column === 'frente'
+          ? (frontLabelMap.get(a.frente) ?? a.frente)
+          : (a[column] ?? '');
+      const valB =
+        column === 'frente'
+          ? (frontLabelMap.get(b.frente) ?? b.frente)
+          : (b[column] ?? '');
+      return valA.localeCompare(valB, 'es', { sensitivity: 'base', numeric: true }) * multiplier;
+    });
+  }, [filteredRows, sortConfig, frontLabelMap]);
+
+  const handleSort = (column: SortColumn) => {
+    setSortConfig((prev) => {
+      if (!prev || prev.column !== column) {
+        return { column, direction: 'asc' };
+      }
+      if (prev.direction === 'asc') {
+        return { column, direction: 'desc' };
+      }
+      return null;
+    });
+  };
 
   const handleExportCsv = () => {
-    if (filteredRows.length === 0) {
+    if (sortedRows.length === 0) {
       onToast({
         type: 'info',
         title: 'Sin datos para exportar',
@@ -108,7 +331,7 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
 
     const lines = [
       headers.join(','),
-      ...filteredRows.map((r) =>
+      ...sortedRows.map((r) =>
         [
           r.fecha,
           r.contratista,
@@ -125,24 +348,25 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
       ),
     ];
 
+    const contrataSuffix =
+      selectedContratas.length === 0
+        ? 'ALL'
+        : selectedContratas.length === 1
+          ? selectedContratas[0]
+          : 'MULTIPLE';
+
     const blob = new Blob(['\uFEFF' + lines.join('\r\n')], {
       type: 'text/csv;charset=utf-8;',
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `OperaLog_${fecha}_${selectedContrata}.csv`;
+    link.download = `OperaLog_${fecha}_${contrataSuffix}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
-
-  const frontLabelMap = useMemo(() => {
-    const map = new Map<FrontType, string>();
-    for (const cfg of FRONT_CONFIGS) map.set(cfg.id, cfg.label);
-    return map;
-  }, []);
 
   return (
     <div className="space-y-4">
@@ -173,51 +397,25 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
               />
             </label>
 
-            {/* Contratista */}
-            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--pluz-muted)' }}>
-              <Building2 className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
-              <span>Contratista:</span>
-              <select
-                value={selectedContrata}
-                onChange={(e) => onSelectedContrataChange(e.target.value)}
-                className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
-                style={{
-                  borderColor: 'var(--pluz-border)',
-                  color: 'var(--pluz-ink)',
-                  backgroundColor: 'var(--pluz-surface)',
-                }}
-              >
-                <option value="ALL">Todas las contratistas</option>
-                {contratas.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {/* Contratista (Selección múltiple) */}
+            <MultiSelectDropdown
+              label="Contratista"
+              allLabel="Todas las contratistas"
+              icon={<Building2 className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />}
+              options={contratas.map((c) => ({ value: c, label: c }))}
+              selectedValues={selectedContratas}
+              onChange={handleContratasChange}
+            />
 
-            {/* Frente */}
-            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--pluz-muted)' }}>
-              <Filter className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
-              <span>Frente:</span>
-              <select
-                value={selectedFront}
-                onChange={(e) => setSelectedFront(e.target.value)}
-                className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
-                style={{
-                  borderColor: 'var(--pluz-border)',
-                  color: 'var(--pluz-ink)',
-                  backgroundColor: 'var(--pluz-surface)',
-                }}
-              >
-                <option value="ALL">Todos los frentes</option>
-                {FRONT_CONFIGS.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {/* Frente (Selección múltiple) */}
+            <MultiSelectDropdown
+              label="Frente"
+              allLabel="Todos los frentes"
+              icon={<Filter className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />}
+              options={FRONT_CONFIGS.map((f) => ({ value: f.id, label: f.label }))}
+              selectedValues={selectedFronts}
+              onChange={setSelectedFronts}
+            />
           </div>
 
           <div className="flex items-center gap-2.5">
@@ -276,34 +474,43 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
             <Eye className="w-3.5 h-3.5" />
             Cumplimiento del día (Solo lectura):
           </span>
-          {complianceByContrata.map((item) => (
-            <button
-              key={item.name}
-              type="button"
-              onClick={() =>
-                onSelectedContrataChange(selectedContrata === item.name ? 'ALL' : item.name)
-              }
-              className="tactile-btn inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border cursor-pointer"
-              style={{
-                backgroundColor: item.reported
-                  ? 'rgba(108, 171, 94, 0.12)'
-                  : 'rgba(230, 57, 70, 0.08)',
-                borderColor: item.reported
-                  ? 'rgba(108, 171, 94, 0.35)'
-                  : 'rgba(230, 57, 70, 0.3)',
-                color: item.reported ? 'var(--pluz-success)' : 'var(--pluz-danger)',
-              }}
-            >
-              {item.reported ? (
-                <CheckCircle2 className="w-3.5 h-3.5" />
-              ) : (
-                <AlertCircle className="w-3.5 h-3.5" />
-              )}
-              <span>
-                {item.name}: {item.reported ? `${item.count} reg.` : 'Pendiente'}
-              </span>
-            </button>
-          ))}
+          {complianceByContrata.map((item) => {
+            const isSelected = selectedContratas.includes(item.name);
+            return (
+              <button
+                key={item.name}
+                type="button"
+                onClick={() =>
+                  handleContratasChange(
+                    isSelected
+                      ? selectedContratas.filter((c) => c !== item.name)
+                      : [...selectedContratas, item.name],
+                  )
+                }
+                className={`tactile-btn inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border cursor-pointer ${
+                  isSelected ? 'ring-2 ring-[#3C5A9F]/50' : ''
+                }`}
+                style={{
+                  backgroundColor: item.reported
+                    ? 'rgba(108, 171, 94, 0.12)'
+                    : 'rgba(230, 57, 70, 0.08)',
+                  borderColor: item.reported
+                    ? 'rgba(108, 171, 94, 0.35)'
+                    : 'rgba(230, 57, 70, 0.3)',
+                  color: item.reported ? 'var(--pluz-success)' : 'var(--pluz-danger)',
+                }}
+              >
+                {item.reported ? (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                ) : (
+                  <AlertCircle className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {item.name}: {item.reported ? `${item.count} reg.` : 'Pendiente'}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -320,7 +527,7 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
             <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--pluz-primary)' }} />
             <span>Consultando turnos del {fecha}...</span>
           </div>
-        ) : filteredRows.length === 0 ? (
+        ) : sortedRows.length === 0 ? (
           <div className="text-center py-14 px-4">
             <p className="text-sm font-semibold" style={{ color: 'var(--pluz-ink)' }}>
               No hay registros para mostrar
@@ -341,18 +548,39 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
                     color: 'var(--pluz-muted)',
                   }}
                 >
-                  <th className="py-2.5 px-3">Contratista</th>
-                  <th className="py-2.5 px-3">Frente</th>
-                  <th className="py-2.5 px-3">Nombres</th>
-                  <th className="py-2.5 px-3">Usuario SSAM</th>
-                  <th className="py-2.5 px-3">Celular</th>
-                  <th className="py-2.5 px-3">Actividad</th>
-                  <th className="py-2.5 px-3">Skill</th>
-                  <th className="py-2.5 px-3">Horario</th>
+                  {TABLE_COLUMNS.map((col) => {
+                    const isActive = sortConfig?.column === col.key;
+                    const ariaSort = isActive
+                      ? sortConfig.direction === 'asc'
+                        ? 'ascending'
+                        : 'descending'
+                      : 'none';
+                    return (
+                      <th key={col.key} aria-sort={ariaSort} className="py-2.5 px-3 select-none">
+                        <button
+                          type="button"
+                          onClick={() => handleSort(col.key)}
+                          className="group inline-flex items-center gap-1 uppercase tracking-wider font-semibold cursor-pointer hover:text-slate-900 focus:outline-none"
+                          style={{ color: isActive ? 'var(--pluz-primary)' : 'inherit' }}
+                        >
+                          <span>{col.label}</span>
+                          {isActive ? (
+                            sortConfig.direction === 'asc' ? (
+                              <ArrowUp className="w-3.5 h-3.5 shrink-0" />
+                            ) : (
+                              <ArrowDown className="w-3.5 h-3.5 shrink-0" />
+                            )
+                          ) : (
+                            <ArrowUpDown className="w-3.5 h-3.5 shrink-0 opacity-35 group-hover:opacity-80" />
+                          )}
+                        </button>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y" style={{ borderColor: 'var(--pluz-border)' }}>
-                {filteredRows.map((row) => (
+                {sortedRows.map((row) => (
                   <tr key={row.id} className="hover:bg-slate-50/70">
                     <td className="py-2 px-3 font-semibold text-xs" style={{ color: 'var(--pluz-primary)' }}>
                       {row.contratista}

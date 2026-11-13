@@ -13,9 +13,20 @@ const cobraUser: UserSession = {
   nombre_mostrar: 'COBRA Operador',
 };
 
+const todayIso = gasClient.getTodayIsoDate();
+
+function getPastIsoDate(daysAgo = 1): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 const sampleRow: TurnRow = {
   id: 'row-1',
-  fecha: '2026-11-13',
+  fecha: todayIso,
   contratista: 'COBRA',
   frente: 'COORDINADORES',
   nombres: 'Juan Perez',
@@ -42,7 +53,7 @@ describe('OperationsTab cache persistence across tab switches', () => {
         <OperationsTab
           user={cobraUser}
           catalogs={[]}
-          initialFecha="2026-11-13"
+          initialFecha={todayIso}
           onToast={onToast}
           onRowsChange={onRowsChange}
         />
@@ -62,7 +73,7 @@ describe('OperationsTab cache persistence across tab switches', () => {
         <OperationsTab
           user={cobraUser}
           catalogs={[]}
-          initialFecha="2026-11-13"
+          initialFecha={todayIso}
           onToast={onToast}
           onRowsChange={onRowsChange}
         />
@@ -84,7 +95,7 @@ describe('OperationsTab cache persistence across tab switches', () => {
       <OperationsTab
         user={cobraUser}
         catalogs={[]}
-        initialFecha="2026-11-13"
+        initialFecha={todayIso}
         onToast={vi.fn()}
       />,
     );
@@ -139,7 +150,7 @@ describe('OperationsTab cache persistence across tab switches', () => {
       <OperationsTab
         user={cobraUser}
         catalogs={[]}
-        initialFecha="2026-11-13"
+        initialFecha={todayIso}
         onToast={onToast}
       />,
     );
@@ -175,5 +186,61 @@ describe('OperationsTab cache persistence across tab switches', () => {
     // Reclamos was replaced, while Despachadores (empty sheet) was preserved
     expect(screen.queryByDisplayValue('Old Reclamo')).toBeNull();
     expect(screen.getByDisplayValue('Maria Existing')).toBeTruthy();
+  });
+
+  it('locks editing, importing, cloning, and saving for previous days', async () => {
+    const yesterdayIso = getPastIsoDate(1);
+    const pastRow: TurnRow = {
+      ...sampleRow,
+      fecha: yesterdayIso,
+    };
+    vi.spyOn(gasClient, 'getTurn').mockResolvedValue([pastRow]);
+
+    render(
+      <OperationsTab
+        user={cobraUser}
+        catalogs={[]}
+        initialFecha={yesterdayIso}
+        onToast={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Juan Perez')).toBeTruthy();
+    });
+
+    expect(screen.getByRole('status').textContent).toContain('Registro bloqueado (solo lectura)');
+
+    const nombreInput = screen.getByDisplayValue('Juan Perez') as HTMLInputElement;
+    expect(nombreInput.disabled).toBe(true);
+
+    const deleteBtn = screen.getByLabelText('Eliminar fila 1 de Coordinadores') as HTMLButtonElement;
+    expect(deleteBtn.disabled).toBe(true);
+
+    const saveBtn = screen.getByRole('button', { name: /Guardar Turno/i }) as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(true);
+
+    const cloneBtn = screen.getByRole('button', { name: /Clonar último turno/i }) as HTMLButtonElement;
+    expect(cloneBtn.disabled).toBe(true);
+
+    for (const btn of screen.getAllByRole('button', { name: /Cargar Excel/i })) {
+      expect((btn as HTMLButtonElement).disabled).toBe(true);
+    }
+
+    for (const btn of screen.getAllByRole('button', { name: /^Fila$/i })) {
+      expect((btn as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
+  it('rejects saveTurn in gasClient when fecha is in the past', async () => {
+    const yesterdayIso = getPastIsoDate(1);
+    await expect(
+      gasClient.saveTurn({
+        fecha: yesterdayIso,
+        contratista: 'COBRA',
+        rows: [{ ...sampleRow, fecha: yesterdayIso }],
+        usuario: 'cobra.user',
+      }),
+    ).rejects.toThrow(/días anteriores/i);
   });
 });
