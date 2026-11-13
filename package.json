@@ -10,10 +10,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "lucide-react": "^0.511.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "recharts": "^2.15.3"
+    "recharts": "^2.15.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.7",

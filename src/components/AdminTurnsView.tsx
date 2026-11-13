@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Building2,
   Calendar,
@@ -7,10 +7,10 @@ import {
   Eye,
   Filter,
   Loader2,
+  RefreshCw,
   Search,
   AlertCircle,
 } from 'lucide-react';
-import { getTurn } from '../services/gasClient';
 import {
   FRONT_CONFIGS,
   type FrontType,
@@ -22,6 +22,11 @@ interface AdminTurnsViewProps {
   fecha: string;
   onFechaChange: (fecha: string) => void;
   contratas: string[];
+  rows: TurnRow[];
+  loading: boolean;
+  onRefresh: () => void;
+  selectedContrata: string;
+  onSelectedContrataChange: (contratista: string) => void;
   onToast: (toast: Omit<ToastMessage, 'id'>) => void;
 }
 
@@ -37,33 +42,15 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
   fecha,
   onFechaChange,
   contratas,
+  rows,
+  loading,
+  onRefresh,
+  selectedContrata,
+  onSelectedContrataChange,
   onToast,
 }) => {
-  const [selectedContrata, setSelectedContrata] = useState<string>('ALL');
   const [selectedFront, setSelectedFront] = useState<string>('ALL');
   const [search, setSearch] = useState<string>('');
-  const [rows, setRows] = useState<TurnRow[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-
-  const loadAllTurns = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await getTurn(fecha, 'ALL', 'ADMIN');
-      setRows(data);
-    } catch (err) {
-      onToast({
-        type: 'error',
-        title: 'Error al consultar turnos',
-        description: err instanceof Error ? err.message : 'Intente nuevamente.',
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [fecha, onToast]);
-
-  useEffect(() => {
-    void loadAllTurns();
-  }, [loadAllTurns]);
 
   const complianceByContrata = useMemo(() => {
     const counts = new Map<string, number>();
@@ -192,7 +179,7 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
               <span>Contratista:</span>
               <select
                 value={selectedContrata}
-                onChange={(e) => setSelectedContrata(e.target.value)}
+                onChange={(e) => onSelectedContrataChange(e.target.value)}
                 className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
                 style={{
                   borderColor: 'var(--pluz-border)',
@@ -255,6 +242,21 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
 
             <button
               type="button"
+              onClick={onRefresh}
+              disabled={loading}
+              className="tactile-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer shrink-0 disabled:opacity-60"
+              style={{
+                borderColor: 'var(--pluz-border)',
+                color: 'var(--pluz-primary)',
+                backgroundColor: 'var(--pluz-surface)',
+              }}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <span>Actualizar</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handleExportCsv}
               className="tactile-btn inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white cursor-pointer shrink-0"
               style={{ backgroundColor: 'var(--pluz-primary)' }}
@@ -279,7 +281,7 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
               key={item.name}
               type="button"
               onClick={() =>
-                setSelectedContrata((prev) => (prev === item.name ? 'ALL' : item.name))
+                onSelectedContrataChange(selectedContrata === item.name ? 'ALL' : item.name)
               }
               className="tactile-btn inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border cursor-pointer"
               style={{

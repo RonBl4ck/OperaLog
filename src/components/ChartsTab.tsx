@@ -18,6 +18,8 @@ import {
   CheckCircle2,
   Clock,
   Building2,
+  Calendar,
+  RefreshCw,
 } from 'lucide-react';
 import { computeCapacityStats } from '../utils/capacityStats';
 import {
@@ -32,6 +34,14 @@ export interface ChartsTabProps {
   rows: TurnRow[];
   horariosCatalog: string[] | CatalogItem[];
   user: UserSession;
+  contratas?: string[];
+  selectedContrata?: string;
+  onSelectedContrataChange?: (contratista: string) => void;
+  fecha?: string;
+  onFechaChange?: (fecha: string) => void;
+  onRefresh?: () => void;
+  loading?: boolean;
+  onDrillDownContrata?: (contratista: string) => void;
 }
 
 const FRONT_COLORS: Record<FrontType, string> = {
@@ -54,7 +64,19 @@ const FRONT_SHORT_LABELS: Record<string, string> = {
   REPARACIONES: 'Reparac.',
 };
 
-export default function ChartsTab({ rows, horariosCatalog, user }: ChartsTabProps) {
+export default function ChartsTab({
+  rows,
+  horariosCatalog,
+  user,
+  contratas = [],
+  selectedContrata = 'ALL',
+  onSelectedContrataChange,
+  fecha,
+  onFechaChange,
+  onRefresh,
+  loading = false,
+  onDrillDownContrata,
+}: ChartsTabProps) {
   const horarioStrings = useMemo(
     () =>
       horariosCatalog
@@ -69,10 +91,28 @@ export default function ChartsTab({ rows, horariosCatalog, user }: ChartsTabProp
     [horariosCatalog]
   );
 
+  const filteredRows = useMemo(() => {
+    if (user.rol !== 'ADMIN' || selectedContrata === 'ALL') return rows;
+    return rows.filter((r) => r.contratista === selectedContrata);
+  }, [rows, user.rol, selectedContrata]);
+
   const stats = useMemo(
+    () => computeCapacityStats(filteredRows, horarioStrings),
+    [filteredRows, horarioStrings]
+  );
+
+  const allContrataStats = useMemo(
     () => computeCapacityStats(rows, horarioStrings),
     [rows, horarioStrings]
   );
+
+  const contrataOptions = useMemo(() => {
+    const set = new Set<string>(contratas);
+    for (const r of rows) {
+      if (r.contratista) set.add(r.contratista);
+    }
+    return Array.from(set).sort();
+  }, [contratas, rows]);
 
   const incompleteCount = stats.missingHorarioCount + stats.missingSsamCount;
   const totalAlertCount = incompleteCount + stats.uncoveredHorarios.length;
@@ -89,6 +129,77 @@ export default function ChartsTab({ rows, horariosCatalog, user }: ChartsTabProp
 
   return (
     <div className="space-y-6">
+      {/* Admin Filter Bar */}
+      {user.rol === 'ADMIN' && (
+        <div
+          className="rounded-xl border p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-3"
+          style={{
+            backgroundColor: 'var(--pluz-surface)',
+            borderColor: 'var(--pluz-border)',
+          }}
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            {fecha && onFechaChange && (
+              <label className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--pluz-muted)' }}>
+                <Calendar className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
+                <span>Fecha:</span>
+                <input
+                  type="date"
+                  value={fecha}
+                  onChange={(e) => onFechaChange(e.target.value)}
+                  className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
+                  style={{
+                    borderColor: 'var(--pluz-border)',
+                    color: 'var(--pluz-ink)',
+                    backgroundColor: 'var(--pluz-surface)',
+                  }}
+                />
+              </label>
+            )}
+
+            {onSelectedContrataChange && (
+              <label className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--pluz-muted)' }}>
+                <Building2 className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
+                <span>Contratista:</span>
+                <select
+                  value={selectedContrata}
+                  onChange={(e) => onSelectedContrataChange(e.target.value)}
+                  className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
+                  style={{
+                    borderColor: 'var(--pluz-border)',
+                    color: 'var(--pluz-ink)',
+                    backgroundColor: 'var(--pluz-surface)',
+                  }}
+                >
+                  <option value="ALL">Todas las contratistas</option>
+                  {contrataOptions.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={loading}
+              className="tactile-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer disabled:opacity-60"
+              style={{
+                borderColor: 'var(--pluz-border)',
+                color: 'var(--pluz-primary)',
+                backgroundColor: 'var(--pluz-surface)',
+              }}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <span>{loading ? 'Actualizando...' : 'Actualizar'}</span>
+            </button>
+          )}
+        </div>
+      )}
       {/* 4 KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* KPI 1: Total Personal Programado */}
@@ -369,14 +480,14 @@ export default function ChartsTab({ rows, horariosCatalog, user }: ChartsTabProp
                 Comparativa por Contratista
               </h3>
               <p className="text-xs" style={{ color: 'var(--pluz-muted)' }}>
-                Personal en campo vs. soporte operativo por contratista
+                Personal en campo vs. soporte operativo por contratista (haz clic en una barra para ver el detalle)
               </p>
             </div>
             <Building2 className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
           </div>
 
           <div className="h-72 w-full">
-            {stats.byContrata.length === 0 ? (
+            {allContrataStats.byContrata.length === 0 ? (
               <div
                 className="h-full flex items-center justify-center text-sm"
                 style={{ color: 'var(--pluz-muted)' }}
@@ -386,7 +497,7 @@ export default function ChartsTab({ rows, horariosCatalog, user }: ChartsTabProp
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={stats.byContrata}
+                  data={allContrataStats.byContrata}
                   margin={{ top: 4, right: 20, left: 0, bottom: 4 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
@@ -412,6 +523,11 @@ export default function ChartsTab({ rows, horariosCatalog, user }: ChartsTabProp
                     fill="#6CAB5E"
                     radius={[6, 6, 0, 0]}
                     barSize={32}
+                    cursor="pointer"
+                    onClick={(data) => {
+                      const c = (data as unknown as { contratista?: string })?.contratista;
+                      if (c) onDrillDownContrata?.(c);
+                    }}
                   />
                   <Bar
                     dataKey="soporte"
@@ -419,6 +535,11 @@ export default function ChartsTab({ rows, horariosCatalog, user }: ChartsTabProp
                     fill="#3C5A9F"
                     radius={[6, 6, 0, 0]}
                     barSize={32}
+                    cursor="pointer"
+                    onClick={(data) => {
+                      const c = (data as unknown as { contratista?: string })?.contratista;
+                      if (c) onDrillDownContrata?.(c);
+                    }}
                   />
                 </BarChart>
               </ResponsiveContainer>

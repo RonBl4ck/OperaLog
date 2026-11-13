@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Clock, Plus, Trash2 } from 'lucide-react';
+import React, { useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, Clock, Download, Plus, Trash2, Upload } from 'lucide-react';
 import { CatalogItem, FrontConfig, FrontType, TurnRow } from '../types/operalog';
 import { createEmptyTurnRow } from '../services/gasClient';
 import { parseExcelPaste } from '../utils/pasteParser';
+import { downloadExcelTemplate, parseExcelWorkbook } from '../utils/excelTemplate';
 
 interface FrontGridSectionProps {
   front: FrontConfig;
@@ -12,6 +13,8 @@ interface FrontGridSectionProps {
   catalogs: CatalogItem[];
   onChangeRows: (frontId: FrontType, updatedRows: TurnRow[]) => void;
   onPasteSuccess?: (count: number, frontLabel: string) => void;
+  onExcelImportSuccess?: (count: number, frontLabel: string) => void;
+  onExcelImportError?: (message: string, frontLabel: string) => void;
 }
 
 function isRowBlank(row: TurnRow, fixedActivity: string | null): boolean {
@@ -34,8 +37,11 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
   catalogs,
   onChangeRows,
   onPasteSuccess,
+  onExcelImportSuccess,
+  onExcelImportError,
 }) => {
   const [collapsed, setCollapsed] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const horarioOptions = useMemo(
     () =>
@@ -143,6 +149,46 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
     onPasteSuccess?.(parsedRows.length, front.label);
   };
 
+  const handleDownloadTemplate = () => {
+    void downloadExcelTemplate(front, catalogs);
+  };
+
+  const handleExcelFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const parsedRows = parseExcelWorkbook(
+        buffer,
+        front,
+        { fecha, contratista },
+        catalogs,
+      );
+
+      if (parsedRows.length === 0) {
+        onExcelImportError?.(
+          'No se encontraron registros válidos en el archivo Excel. La tabla actual no fue modificada.',
+          front.label,
+        );
+        return;
+      }
+
+      onChangeRows(front.id, parsedRows);
+      if (collapsed) {
+        setCollapsed(false);
+      }
+      onExcelImportSuccess?.(parsedRows.length, front.label);
+    } catch (err) {
+      onExcelImportError?.(
+        err instanceof Error ? err.message : 'No se pudo leer el archivo Excel.',
+        front.label,
+      );
+    } finally {
+      e.target.value = '';
+    }
+  };
+
   const inputBaseClass =
     'w-full rounded border bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#3C5A9F]/25 focus:border-[#3C5A9F]';
 
@@ -202,6 +248,37 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
               ))}
             </select>
           </div>
+
+          {front.supportsExcelTemplate && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                aria-label={`Cargar archivo Excel para ${front.label}`}
+                onChange={handleExcelFileChange}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={handleDownloadTemplate}
+                title={`Descargar plantilla Excel para ${front.label}`}
+                className="tactile-btn inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Download className="w-3.5 h-3.5 text-slate-500" />
+                Plantilla
+              </button>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                title={`Cargar Excel para llenar ${front.label}`}
+                className="tactile-btn inline-flex items-center gap-1 rounded-lg border border-emerald-600/30 bg-emerald-50/70 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100/70"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                Cargar Excel
+              </button>
+            </>
+          )}
 
           <button
             type="button"

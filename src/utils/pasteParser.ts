@@ -2,7 +2,7 @@ import type { FrontConfig, TurnRow } from '../types/operalog';
 
 let fallbackCounter = 0;
 
-function generateRowId(): string {
+export function generateRowId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }

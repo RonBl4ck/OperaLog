@@ -15,6 +15,7 @@ export interface FrontConfig {
   fixedActivity: string | null;
   hasSkill: boolean;
   isFieldFront: boolean;
+  supportsExcelTemplate: boolean;
 }
 
 export const FRONT_CONFIGS: FrontConfig[] = [
@@ -26,6 +27,7 @@ export const FRONT_CONFIGS: FrontConfig[] = [
     fixedActivity: null,
     hasSkill: false,
     isFieldFront: false,
+    supportsExcelTemplate: false,
   },
   {
     id: 'SUPERVISORES CAPA',
@@ -35,6 +37,7 @@ export const FRONT_CONFIGS: FrontConfig[] = [
     fixedActivity: null,
     hasSkill: false,
     isFieldFront: false,
+    supportsExcelTemplate: false,
   },
   {
     id: 'LOCALIZADORES',
@@ -44,6 +47,7 @@ export const FRONT_CONFIGS: FrontConfig[] = [
     fixedActivity: null,
     hasSkill: false,
     isFieldFront: false,
+    supportsExcelTemplate: false,
   },
   {
     id: 'DESPACHADORES',
@@ -53,6 +57,7 @@ export const FRONT_CONFIGS: FrontConfig[] = [
     fixedActivity: null,
     hasSkill: false,
     isFieldFront: false,
+    supportsExcelTemplate: true,
   },
   {
     id: 'RECLAMOS',
@@ -62,6 +67,7 @@ export const FRONT_CONFIGS: FrontConfig[] = [
     fixedActivity: 'RECLAMISTA',
     hasSkill: true,
     isFieldFront: true,
+    supportsExcelTemplate: true,
   },
   {
     id: 'TEKO',
@@ -71,6 +77,7 @@ export const FRONT_CONFIGS: FrontConfig[] = [
     fixedActivity: 'TEKO',
     hasSkill: true,
     isFieldFront: true,
+    supportsExcelTemplate: true,
   },
   {
     id: 'REPARACIONES',
@@ -80,6 +87,7 @@ export const FRONT_CONFIGS: FrontConfig[] = [
     fixedActivity: 'REPARACIONES',
     hasSkill: true,
     isFieldFront: true,
+    supportsExcelTemplate: true,
   },
 ];
 

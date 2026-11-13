@@ -1,11 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Building2,
   Calendar,
   ClipboardPaste,
   Copy,
+  Download,
   Loader2,
+  RefreshCw,
   Save,
+  Upload,
 } from 'lucide-react';
 import {
   CatalogItem,
@@ -16,14 +19,25 @@ import {
   UserSession,
 } from '../types/operalog';
 import { getLastTurn, getTurn, saveTurn } from '../services/gasClient';
+import {
+  downloadGeneralExcelTemplate,
+  parseGeneralExcelWorkbook,
+} from '../utils/excelTemplate';
 import { FrontGridSection } from './FrontGridSection';
 
 interface OperationsTabProps {
   user: UserSession;
   catalogs: CatalogItem[];
   contratas?: string[];
+  initialFecha?: string;
   onToast: (toast: Omit<ToastMessage, 'id'>) => void;
   onRowsChange?: (rows: TurnRow[], fecha: string) => void;
+}
+
+const contrataSessionCache = new Map<string, TurnRow[]>();
+
+export function clearOperationsCache(): void {
+  contrataSessionCache.clear();
 }
 
 function getTodayIsoDate(): string {
@@ -38,6 +52,7 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
   user,
   catalogs,
   contratas = ['ALFA', 'BETA'],
+  initialFecha,
   onToast,
   onRowsChange,
 }) => {
@@ -47,14 +62,23 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
     [contratas],
   );
 
-  const [fecha, setFecha] = useState<string>(getTodayIsoDate);
+  const [fecha, setFecha] = useState<string>(() => initialFecha ?? getTodayIsoDate());
   const [contratista, setContratista] = useState<string>(() =>
     isAdmin ? availableContratas[0] : user.contratista,
   );
-  const [rows, setRows] = useState<TurnRow[]>([]);
+  const initialCacheKey = `${initialFecha ?? getTodayIsoDate()}__${
+    isAdmin ? availableContratas[0] : user.contratista
+  }`;
+  const [rows, setRows] = useState<TurnRow[]>(
+    () => contrataSessionCache.get(initialCacheKey) ?? [],
+  );
+  const hydratedKeyRef = useRef<string | null>(
+    contrataSessionCache.has(initialCacheKey) ? initialCacheKey : null,
+  );
   const [loadingTurn, setLoadingTurn] = useState<boolean>(false);
   const [cloning, setCloning] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
+  const generalFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Keep non-admin locked to their contratista
   useEffect(() => {
@@ -65,29 +89,43 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
     }
   }, [isAdmin, user.contratista, availableContratas, contratista]);
 
-  const loadTurn = useCallback(async () => {
-    setLoadingTurn(true);
-    try {
-      const data = await getTurn(fecha, contratista, user.rol);
-      setRows(data);
-    } catch (err) {
-      onToast({
-        type: 'error',
-        title: 'Error al cargar turno',
-        description: err instanceof Error ? err.message : 'Intente nuevamente.',
-      });
-    } finally {
-      setLoadingTurn(false);
-    }
-  }, [fecha, contratista, user.rol, onToast]);
+  const loadTurn = useCallback(
+    async (force = false) => {
+      const cacheKey = `${fecha}__${contratista}`;
+      if (!force && contrataSessionCache.has(cacheKey)) {
+        hydratedKeyRef.current = cacheKey;
+        setRows(contrataSessionCache.get(cacheKey)!);
+        return;
+      }
+      setLoadingTurn(true);
+      try {
+        const data = await getTurn(fecha, contratista, user.rol);
+        contrataSessionCache.set(cacheKey, data);
+        hydratedKeyRef.current = cacheKey;
+        setRows(data);
+      } catch (err) {
+        onToast({
+          type: 'error',
+          title: 'Error al cargar turno',
+          description: err instanceof Error ? err.message : 'Intente nuevamente.',
+        });
+      } finally {
+        setLoadingTurn(false);
+      }
+    },
+    [fecha, contratista, user.rol, onToast],
+  );
 
   useEffect(() => {
-    void loadTurn();
+    void loadTurn(false);
   }, [loadTurn]);
 
   useEffect(() => {
+    const cacheKey = `${fecha}__${contratista}`;
+    if (hydratedKeyRef.current !== cacheKey) return;
+    contrataSessionCache.set(cacheKey, rows);
     onRowsChange?.(rows, fecha);
-  }, [rows, fecha, onRowsChange]);
+  }, [rows, fecha, contratista, onRowsChange]);
 
   const rowsByFront = useMemo(() => {
     const grouped = new Map<FrontType, TurnRow[]>();
@@ -112,6 +150,63 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
     },
     [],
   );
+
+  const handleGeneralExcelUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const parsedByFront = parseGeneralExcelWorkbook(
+        buffer,
+        { fecha, contratista },
+        catalogs,
+      );
+      const updatedFrontIds = Object.keys(parsedByFront) as FrontType[];
+
+      if (updatedFrontIds.length === 0) {
+        onToast({
+          type: 'info',
+          title: 'Sin tablas con datos',
+          description:
+            'Ninguna hoja del Excel contenía filas con datos. Las tablas actuales se mantuvieron sin cambios.',
+        });
+        return;
+      }
+
+      setRows((prev) => {
+        const preserved = prev.filter((r) => !updatedFrontIds.includes(r.frente));
+        const incoming = updatedFrontIds.flatMap(
+          (frontId) => parsedByFront[frontId] ?? [],
+        );
+        return [...preserved, ...incoming];
+      });
+
+      const summary = updatedFrontIds
+        .map((id) => {
+          const label = FRONT_CONFIGS.find((f) => f.id === id)?.label ?? id;
+          return `${label} (${parsedByFront[id]?.length ?? 0})`;
+        })
+        .join(', ');
+
+      onToast({
+        type: 'success',
+        title: 'Plantilla general cargada',
+        description: `Se reemplazaron: ${summary}. Las hojas vacías no modificaron sus tablas.`,
+      });
+    } catch (err) {
+      onToast({
+        type: 'error',
+        title: 'Error al cargar Excel general',
+        description:
+          err instanceof Error ? err.message : 'No se pudo leer el archivo.',
+      });
+    } finally {
+      e.target.value = '';
+    }
+  };
 
   const handleCloneLastTurn = async () => {
     setCloning(true);
@@ -267,6 +362,48 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <input
+            ref={generalFileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            aria-label="Cargar plantilla Excel general"
+            onChange={handleGeneralExcelUpload}
+            className="hidden"
+          />
+
+          <button
+            type="button"
+            onClick={() => void downloadGeneralExcelTemplate(catalogs)}
+            disabled={loadingTurn || saving}
+            className="tactile-btn inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            title="Descargar plantilla Excel general (Despachadores, Reclamos, Teko y Reparaciones con desplegables)"
+          >
+            <Download className="w-4 h-4 text-slate-500" />
+            <span>Plantilla general</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => generalFileInputRef.current?.click()}
+            disabled={loadingTurn || saving}
+            className="tactile-btn inline-flex items-center gap-1.5 rounded-lg border border-emerald-600/30 bg-emerald-50/70 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100/70 disabled:opacity-50"
+            title="Cargar plantilla Excel general (solo reemplaza las hojas con datos)"
+          >
+            <Upload className="w-4 h-4" />
+            <span>Cargar Excel</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void loadTurn(true)}
+            disabled={loadingTurn || saving}
+            className="tactile-btn inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            title="Recargar datos desde Google Sheets"
+          >
+            <RefreshCw className={`w-4 h-4 ${loadingTurn ? 'animate-spin' : ''}`} />
+            <span>Recargar</span>
+          </button>
+
           <button
             type="button"
             onClick={handleCloneLastTurn}
@@ -339,6 +476,20 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
                   type: 'info',
                   title: 'Filas importadas desde Excel',
                   description: `Se agregaron ${count} registros en ${frontLabel}.`,
+                })
+              }
+              onExcelImportSuccess={(count, frontLabel) =>
+                onToast({
+                  type: 'success',
+                  title: 'Plantilla Excel cargada',
+                  description: `Se cargaron ${count} registros en ${frontLabel}.`,
+                })
+              }
+              onExcelImportError={(message, frontLabel) =>
+                onToast({
+                  type: 'error',
+                  title: `Error al cargar Excel (${frontLabel})`,
+                  description: message,
                 })
               }
             />

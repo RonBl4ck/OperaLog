@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react
 import { Loader2 } from 'lucide-react';
 import { LoginView } from './components/LoginView';
 import { TopNav, type AppTab } from './components/TopNav';
-import { OperationsTab } from './components/OperationsTab';
+import { OperationsTab, clearOperationsCache } from './components/OperationsTab';
 import { AdminTurnsView } from './components/AdminTurnsView';
 import { AdminCatalogsTab } from './components/AdminCatalogsTab';
 import { ToastContainer } from './components/ui/ToastContainer';
@@ -42,7 +42,9 @@ export default function App() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   });
-  const [adminChartRows, setAdminChartRows] = useState<TurnRow[] | null>(null);
+  const [adminTurnsCache, setAdminTurnsCache] = useState<Record<string, TurnRow[]>>({});
+  const [adminLoading, setAdminLoading] = useState<boolean>(false);
+  const [adminSelectedContrata, setAdminSelectedContrata] = useState<string>('ALL');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const addToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
@@ -73,16 +75,32 @@ export default function App() {
     }
   }, [user, loadBootstrapData]);
 
-  // Para ADMIN en pestaña Gráficos, cargar todas las contratistas de la fecha activa
+  const fetchAdminTurns = useCallback(
+    async (fecha: string, force = false) => {
+      if (!force && adminTurnsCache[fecha]) return;
+      setAdminLoading(true);
+      try {
+        const allRows = await getTurn(fecha, 'ALL', 'ADMIN');
+        setAdminTurnsCache((prev) => ({ ...prev, [fecha]: allRows }));
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: 'Error al consultar turnos',
+          description: err instanceof Error ? err.message : 'Intente nuevamente.',
+        });
+      } finally {
+        setAdminLoading(false);
+      }
+    },
+    [adminTurnsCache, addToast],
+  );
+
+  // Para ADMIN, cargar la fecha activa solo si aún no está en caché
   useEffect(() => {
-    if (user?.rol === 'ADMIN' && activeTab === 'graficos') {
-      getTurn(currentFecha, 'ALL', 'ADMIN')
-        .then((allRows) => setAdminChartRows(allRows))
-        .catch(() => setAdminChartRows(null));
-    } else {
-      setAdminChartRows(null);
+    if (user?.rol === 'ADMIN' && (activeTab === 'graficos' || activeTab === 'registro')) {
+      void fetchAdminTurns(currentFecha, false);
     }
-  }, [user, activeTab, currentFecha]);
+  }, [user, activeTab, currentFecha, fetchAdminTurns]);
 
   const handleLoginSuccess = useCallback((loggedUser: UserSession) => {
     setUser(loggedUser);
@@ -97,7 +115,9 @@ export default function App() {
   const handleLogout = useCallback(() => {
     setUser(null);
     setCurrentRows([]);
-    setAdminChartRows(null);
+    setAdminTurnsCache({});
+    setAdminSelectedContrata('ALL');
+    clearOperationsCache();
     try {
       sessionStorage.removeItem(SESSION_KEY);
     } catch {
@@ -128,7 +148,8 @@ export default function App() {
     );
   }
 
-  const chartRows = user.rol === 'ADMIN' && adminChartRows ? adminChartRows : currentRows;
+  const adminRowsForDate = adminTurnsCache[currentFecha] ?? [];
+  const chartRows = user.rol === 'ADMIN' ? adminRowsForDate : currentRows;
 
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--pluz-bg)' }}>
@@ -146,6 +167,11 @@ export default function App() {
               fecha={currentFecha}
               onFechaChange={setCurrentFecha}
               contratas={contratas}
+              rows={adminRowsForDate}
+              loading={adminLoading}
+              onRefresh={() => void fetchAdminTurns(currentFecha, true)}
+              selectedContrata={adminSelectedContrata}
+              onSelectedContrataChange={setAdminSelectedContrata}
               onToast={addToast}
             />
           ) : (
@@ -153,6 +179,7 @@ export default function App() {
               user={user}
               catalogs={catalogs}
               contratas={contratas}
+              initialFecha={currentFecha}
               onToast={addToast}
               onRowsChange={handleRowsChange}
             />
@@ -171,6 +198,17 @@ export default function App() {
               rows={chartRows}
               horariosCatalog={activeHorarios}
               user={user}
+              contratas={contratas}
+              selectedContrata={adminSelectedContrata}
+              onSelectedContrataChange={setAdminSelectedContrata}
+              fecha={currentFecha}
+              onFechaChange={setCurrentFecha}
+              onRefresh={() => void fetchAdminTurns(currentFecha, true)}
+              loading={adminLoading}
+              onDrillDownContrata={(contratista) => {
+                setAdminSelectedContrata(contratista);
+                setActiveTab('registro');
+              }}
             />
           </Suspense>
         )}

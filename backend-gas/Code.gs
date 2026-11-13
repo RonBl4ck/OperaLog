@@ -23,6 +23,13 @@ function getSheet(name) {
   return sheet;
 }
 
+function normalizeDateValue(val) {
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  return val !== undefined && val !== null ? String(val).trim() : '';
+}
+
 function sheetToObjects(sheetName) {
   const sheet = getSheet(sheetName);
   const values = sheet.getDataRange().getValues();
@@ -31,7 +38,14 @@ function sheetToObjects(sheetName) {
   return values.slice(1).map(row => {
     const obj = {};
     headers.forEach((h, i) => {
-      obj[h] = row[i] !== undefined && row[i] !== null ? String(row[i]).trim() : '';
+      const val = row[i];
+      if (val instanceof Date) {
+        obj[h] = h === 'fecha'
+          ? Utilities.formatDate(val, Session.getScriptTimeZone(), 'yyyy-MM-dd')
+          : val.toISOString();
+      } else {
+        obj[h] = val !== undefined && val !== null ? String(val).trim() : '';
+      }
     });
     return obj;
   });
@@ -179,7 +193,7 @@ function doPost(e) {
       const nowIso = new Date().toISOString();
 
       const keptRows = data.slice(1).filter(r => {
-        const rowFecha = String(r[1]).trim();
+        const rowFecha = normalizeDateValue(r[1]);
         const rowContrata = String(r[2]).trim();
         return !(rowFecha === fecha && rowContrata === contratista);
       });
