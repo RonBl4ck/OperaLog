@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+:root {
+  /* Paleta PLUZ (Obsidian Branding-PLUZ.md) */
+  --pluz-primary: #3C5A9F;
+  --pluz-primary-hover: #324B85;
+  --pluz-accent: #FBC140;
+  --pluz-success: #6CAB5E;
+  --pluz-danger: #E63946;
+  --pluz-bg: #F8F9FA;
+  --pluz-surface: #FFFFFF;
+  --pluz-muted: #64748B;
+  --pluz-border: #E2E8F0;
+  --pluz-ink: #0F172A;
+
+  /* Curvas Emil Kowalski */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+body {
+  background-color: var(--pluz-bg);
+  color: var(--pluz-ink);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tactile press feedback (Emil Kowalski) */
+.tactile-btn {
+  transition: transform 160ms var(--ease-out), background-color 150ms ease, opacity 150ms ease, border-color 150ms ease;
+}
+.tactile-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Origin-aware popovers & dropdowns (never scale(0)) */
+.popover-surface {
+  transform-origin: var(--transform-origin, top left);
+  transition: transform 180ms var(--ease-out), opacity 180ms var(--ease-out);
+}
+.popover-surface[data-closed="true"] {
+  opacity: 0;
+  transform: scale(0.95);
+  pointer-events: none;
+}
+
+/* Modal centered entrance */
+.modal-surface {
+  transform-origin: center;
+  transition: transform 220ms var(--ease-out), opacity 200ms var(--ease-out);
+}
+.modal-surface[data-starting="true"] {
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+/* Sonner-inspired toast transition */
+.toast-item {
+  transition: transform 320ms var(--ease-out), opacity 260ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .hover-lift {
+    transition: transform 180ms var(--ease-out), box-shadow 180ms ease;
+  }
+  .hover-lift:hover {
+    transform: translateY(-1px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tactile-btn,
+  .popover-surface,
+  .modal-surface,
+  .toast-item,
+  .hover-lift {
+    transition-duration: 0.01ms !important;
+    transform: none !important;
+  }
+}

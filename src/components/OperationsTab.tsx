@@ -1,0 +1,352 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Building2,
+  Calendar,
+  ClipboardPaste,
+  Copy,
+  Loader2,
+  Save,
+} from 'lucide-react';
+import {
+  CatalogItem,
+  FRONT_CONFIGS,
+  FrontType,
+  ToastMessage,
+  TurnRow,
+  UserSession,
+} from '../types/operalog';
+import { getLastTurn, getTurn, saveTurn } from '../services/gasClient';
+import { FrontGridSection } from './FrontGridSection';
+
+interface OperationsTabProps {
+  user: UserSession;
+  catalogs: CatalogItem[];
+  contratas?: string[];
+  onToast: (toast: Omit<ToastMessage, 'id'>) => void;
+  onRowsChange?: (rows: TurnRow[], fecha: string) => void;
+}
+
+function getTodayIsoDate(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export const OperationsTab: React.FC<OperationsTabProps> = ({
+  user,
+  catalogs,
+  contratas = ['ALFA', 'BETA'],
+  onToast,
+  onRowsChange,
+}) => {
+  const isAdmin = user.rol === 'ADMIN';
+  const availableContratas = useMemo(
+    () => (contratas.length > 0 ? contratas : ['ALFA', 'BETA']),
+    [contratas],
+  );
+
+  const [fecha, setFecha] = useState<string>(getTodayIsoDate);
+  const [contratista, setContratista] = useState<string>(() =>
+    isAdmin ? availableContratas[0] : user.contratista,
+  );
+  const [rows, setRows] = useState<TurnRow[]>([]);
+  const [loadingTurn, setLoadingTurn] = useState<boolean>(false);
+  const [cloning, setCloning] = useState<boolean>(false);
+  const [saving, setSaving] = useState<boolean>(false);
+
+  // Keep non-admin locked to their contratista
+  useEffect(() => {
+    if (!isAdmin) {
+      setContratista(user.contratista);
+    } else if (!availableContratas.includes(contratista)) {
+      setContratista(availableContratas[0]);
+    }
+  }, [isAdmin, user.contratista, availableContratas, contratista]);
+
+  const loadTurn = useCallback(async () => {
+    setLoadingTurn(true);
+    try {
+      const data = await getTurn(fecha, contratista, user.rol);
+      setRows(data);
+    } catch (err) {
+      onToast({
+        type: 'error',
+        title: 'Error al cargar turno',
+        description: err instanceof Error ? err.message : 'Intente nuevamente.',
+      });
+    } finally {
+      setLoadingTurn(false);
+    }
+  }, [fecha, contratista, user.rol, onToast]);
+
+  useEffect(() => {
+    void loadTurn();
+  }, [loadTurn]);
+
+  useEffect(() => {
+    onRowsChange?.(rows, fecha);
+  }, [rows, fecha, onRowsChange]);
+
+  const rowsByFront = useMemo(() => {
+    const grouped = new Map<FrontType, TurnRow[]>();
+    for (const cfg of FRONT_CONFIGS) {
+      grouped.set(cfg.id, []);
+    }
+    for (const row of rows) {
+      const bucket = grouped.get(row.frente);
+      if (bucket) {
+        bucket.push(row);
+      }
+    }
+    return grouped;
+  }, [rows]);
+
+  const handleFrontRowsChange = useCallback(
+    (frontId: FrontType, updatedFrontRows: TurnRow[]) => {
+      setRows((prev) => {
+        const others = prev.filter((r) => r.frente !== frontId);
+        return [...others, ...updatedFrontRows];
+      });
+    },
+    [],
+  );
+
+  const handleCloneLastTurn = async () => {
+    setCloning(true);
+    try {
+      const cloned = await getLastTurn(fecha, contratista);
+      if (cloned.length === 0) {
+        onToast({
+          type: 'info',
+          title: 'Sin turno previo',
+          description: `No se encontró un turno anterior para ${contratista} antes del ${fecha}.`,
+        });
+        return;
+      }
+      setRows(cloned);
+      onToast({
+        type: 'success',
+        title: 'Turno clonado',
+        description: `Se cargaron ${cloned.length} registros del último turno de ${contratista}.`,
+      });
+    } catch (err) {
+      onToast({
+        type: 'error',
+        title: 'Error al clonar turno',
+        description: err instanceof Error ? err.message : 'Intente nuevamente.',
+      });
+    } finally {
+      setCloning(false);
+    }
+  };
+
+  const handleSaveTurn = async () => {
+    const nonEmptyRows = rows.filter((r) => {
+      const cfg = FRONT_CONFIGS.find((c) => c.id === r.frente);
+      const act = cfg?.fixedActivity && r.actividad === cfg.fixedActivity ? '' : r.actividad;
+      return (
+        r.nombres.trim() !== '' ||
+        r.usuario_ssam.trim() !== '' ||
+        r.celular.trim() !== '' ||
+        act.trim() !== '' ||
+        r.skill.trim() !== '' ||
+        r.horario.trim() !== ''
+      );
+    });
+
+    for (const row of nonEmptyRows) {
+      const cfg = FRONT_CONFIGS.find((c) => c.id === row.frente);
+      if (row.horario.trim() === '') {
+        onToast({
+          type: 'error',
+          title: 'Campos requeridos incompletos',
+          description: `Falta seleccionar Horario en ${cfg?.label ?? row.frente} (${row.nombres || 'fila sin nombre'}).`,
+        });
+        return;
+      }
+      if (cfg?.hasSsam && row.usuario_ssam.trim() === '') {
+        onToast({
+          type: 'error',
+          title: 'Usuario SSAM requerido',
+          description: `Falta Usuario SSAM en ${cfg.label} (${row.nombres || 'fila sin nombre'}).`,
+        });
+        return;
+      }
+    }
+
+    setSaving(true);
+    try {
+      const normalized = nonEmptyRows.map((row) => {
+        const cfg = FRONT_CONFIGS.find((c) => c.id === row.frente);
+        return {
+          ...row,
+          fecha,
+          contratista,
+          actividad: cfg?.fixedActivity ?? row.actividad,
+        };
+      });
+
+      const res = await saveTurn({
+        fecha,
+        contratista,
+        rows: normalized,
+        usuario: user.usuario,
+      });
+
+      setRows(normalized);
+      onToast({
+        type: 'success',
+        title: 'Turno guardado',
+        description: `${res.savedCount} registros guardados para ${contratista} (${fecha}).`,
+      });
+    } catch (err) {
+      onToast({
+        type: 'error',
+        title: 'Error al guardar turno',
+        description: err instanceof Error ? err.message : 'Intente nuevamente.',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const totalCount = rows.length;
+
+  return (
+    <div className="space-y-4">
+      {/* Top Control Bar */}
+      <div
+        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 shadow-xs"
+        style={{
+          backgroundColor: 'var(--pluz-surface)',
+          borderColor: 'var(--pluz-border)',
+        }}
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Date Picker */}
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            <Calendar className="w-4 h-4 text-slate-400" />
+            <span>Fecha:</span>
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#3C5A9F]/25 focus:border-[#3C5A9F]"
+            />
+          </label>
+
+          {/* Contratista Selector */}
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            <Building2 className="w-4 h-4 text-slate-400" />
+            <span>Contrata:</span>
+            {isAdmin ? (
+              <select
+                aria-label="Seleccionar contratista"
+                value={contratista}
+                onChange={(e) => setContratista(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#3C5A9F]/25 focus:border-[#3C5A9F]"
+              >
+                {availableContratas.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-700">
+                {contratista}
+              </span>
+            )}
+          </div>
+
+          <span className="text-xs font-medium text-slate-500 tabular-nums">
+            Total personal: <strong className="text-slate-800">{totalCount}</strong>
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleCloneLastTurn}
+            disabled={cloning || loadingTurn || saving}
+            className="tactile-btn inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {cloning ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Copy className="w-4 h-4 text-slate-500" />
+            )}
+            Clonar último turno
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSaveTurn}
+            disabled={saving || loadingTurn || cloning}
+            style={{ backgroundColor: 'var(--pluz-primary)' }}
+            className="tactile-btn inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white hover:opacity-95 disabled:opacity-60 shadow-xs"
+          >
+            {saving ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
+            {saving ? 'Guardando...' : 'Guardar Turno'}
+          </button>
+        </div>
+      </div>
+
+      {/* Excel Paste Tip Banner */}
+      <div
+        className="flex items-start gap-3 rounded-xl border px-4 py-3 text-xs sm:text-sm"
+        style={{
+          backgroundColor: '#EEF2FF',
+          borderColor: '#C7D2FE',
+          color: '#1E3A8A',
+        }}
+      >
+        <ClipboardPaste className="w-4 h-4 mt-0.5 shrink-0 text-[#3C5A9F]" />
+        <p>
+          <strong>Pegado rápido desde Excel:</strong> Copia tus filas en Excel y presiona{' '}
+          <kbd className="rounded bg-white/80 px-1.5 py-0.5 font-mono text-xs font-semibold border border-indigo-200">
+            Ctrl+V
+          </kbd>{' '}
+          directamente sobre el campo <strong>Nombres</strong> de cualquier bloque para importar múltiples técnicos automáticamente.
+        </p>
+      </div>
+
+      {/* 7 Front Grid Sections */}
+      {loadingTurn ? (
+        <div className="flex items-center justify-center gap-2 rounded-xl border bg-white py-12 text-sm text-slate-500" style={{ borderColor: 'var(--pluz-border)' }}>
+          <Loader2 className="w-4 h-4 animate-spin text-[#3C5A9F]" />
+          Cargando turno de {contratista} ({fecha})...
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {FRONT_CONFIGS.map((front) => (
+            <FrontGridSection
+              key={front.id}
+              front={front}
+              rows={rowsByFront.get(front.id) ?? []}
+              fecha={fecha}
+              contratista={contratista}
+              catalogs={catalogs}
+              onChangeRows={handleFrontRowsChange}
+              onPasteSuccess={(count, frontLabel) =>
+                onToast({
+                  type: 'info',
+                  title: 'Filas importadas desde Excel',
+                  description: `Se agregaron ${count} registros en ${frontLabel}.`,
+                })
+              }
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default OperationsTab;
