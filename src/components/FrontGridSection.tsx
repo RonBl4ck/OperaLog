@@ -325,7 +325,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
                   <th className="py-2 px-2 min-w-[200px]">Nombres</th>
                   {front.hasSsam && (
                     <th className="py-2 px-2 min-w-[140px]">
-                      Usuario SSAM <span className="text-[#E63946]">*</span>
+                      Usuario SSAM
                     </th>
                   )}
                   <th className="py-2 px-2 min-w-[125px]">Celular</th>
@@ -343,7 +343,6 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((row, idx) => {
-                  const missingSsam = front.hasSsam && row.usuario_ssam.trim() === '';
                   const missingHorario = row.horario.trim() === '';
 
                   return (
@@ -376,12 +375,7 @@ export const FrontGridSection: React.FC<FrontGridSectionProps> = ({
                             onChange={(e) =>
                               handleFieldChange(row.id, 'usuario_ssam', e.target.value)
                             }
-                            aria-invalid={missingSsam}
-                            className={`${inputBaseClass} ${
-                              missingSsam
-                                ? 'border-[#E63946]/70 bg-red-50/30'
-                                : 'border-slate-200'
-                            }`}
+                            className={`${inputBaseClass} border-slate-200`}
                           />
                         </td>
                       )}

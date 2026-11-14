@@ -282,14 +282,6 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
         });
         return;
       }
-      if (cfg?.hasSsam && row.usuario_ssam.trim() === '') {
-        onToast({
-          type: 'error',
-          title: 'Usuario SSAM requerido',
-          description: `Falta Usuario SSAM en ${cfg.label} (${row.nombres || 'fila sin nombre'}).`,
-        });
-        return;
-      }
     }
 
     setSaving(true);

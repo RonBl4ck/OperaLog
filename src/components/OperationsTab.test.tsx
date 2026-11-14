@@ -243,4 +243,45 @@ describe('OperationsTab cache persistence across tab switches', () => {
       }),
     ).rejects.toThrow(/días anteriores/i);
   });
+
+  it('allows saving a SSAM-enabled front row without usuario_ssam', async () => {
+    const reclamoWithoutSsam: TurnRow = {
+      ...sampleRow,
+      id: 'rec-no-ssam',
+      frente: 'RECLAMOS',
+      nombres: 'Ana Sin Ssam',
+      usuario_ssam: '',
+      actividad: 'RECLAMISTA',
+    };
+    vi.spyOn(gasClient, 'getTurn').mockResolvedValue([reclamoWithoutSsam]);
+    const saveTurnSpy = vi
+      .spyOn(gasClient, 'saveTurn')
+      .mockResolvedValue({ ok: true, savedCount: 1 });
+    const onToast = vi.fn();
+
+    render(
+      <OperationsTab
+        user={cobraUser}
+        catalogs={[]}
+        initialFecha={todayIso}
+        onToast={onToast}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Ana Sin Ssam')).toBeTruthy();
+    });
+
+    const ssamInput = screen.getByPlaceholderText('Usuario SSAM') as HTMLInputElement;
+    expect(ssamInput.getAttribute('aria-invalid')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Guardar Turno/i }));
+
+    await waitFor(() => {
+      expect(saveTurnSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(onToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'success' }),
+    );
+  });
 });
