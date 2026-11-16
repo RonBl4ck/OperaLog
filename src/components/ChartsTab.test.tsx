@@ -122,4 +122,35 @@ describe('ChartsTab (Admin Field Dashboard)', () => {
     expect(screen.getByText('Participación de Recursos por Empresa')).toBeTruthy();
     expect(screen.getByText('Total Cuadrillas por Especialidad y Empresa')).toBeTruthy();
   });
+
+  it('renders copy as image and copy for Excel buttons in the matrix header', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    render(
+      <ChartsTab
+        rows={sampleRows}
+        user={ADMIN_USER}
+        contratas={['ALFA', 'BETA']}
+        fechaInicio="2026-11-16"
+        fechaFin="2026-11-16"
+        onFechaRangeChange={vi.fn()}
+      />,
+    );
+
+    const copyImgBtn = screen.getByRole('button', { name: 'Copiar matriz como imagen' });
+    const copyExcelBtn = screen.getByRole('button', { name: 'Copiar matriz para Excel' });
+
+    expect(copyImgBtn).toBeTruthy();
+    expect(copyExcelBtn).toBeTruthy();
+
+    fireEvent.click(copyExcelBtn);
+    await vi.waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(1);
+    });
+    expect(writeText.mock.calls[0][0]).toContain('Especialidad\tALFA\tBETA\tTotal');
+  });
 });

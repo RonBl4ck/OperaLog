@@ -24,12 +24,16 @@ import {
   Calendar,
   RefreshCw,
   Filter,
+  Image as ImageIcon,
+  FileSpreadsheet,
+  Check,
 } from 'lucide-react';
 import {
   FIELD_CATEGORIES,
   computeFieldDashboardStats,
   type FieldCategoryId,
 } from '../utils/capacityStats';
+import { copyMatrixAsImage, copyMatrixForExcel } from '../utils/matrixExport';
 import type { CatalogItem, TurnRow, UserSession } from '../types/operalog';
 
 export interface ChartsTabProps {
@@ -82,6 +86,10 @@ export default function ChartsTab({
 }: ChartsTabProps) {
   const [selectedContratas, setSelectedContratas] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<FieldCategoryId[]>([]);
+  const [matrixCopyFeedback, setMatrixCopyFeedback] = useState<
+    'image-copied' | 'image-downloaded' | 'excel-copied' | 'error' | null
+  >(null);
+  const [copyingMatrix, setCopyingMatrix] = useState(false);
 
   const contrataOptions = useMemo(() => {
     const set = new Set<string>(contratas.filter((c) => c.trim().length > 0));
@@ -116,6 +124,51 @@ export default function ChartsTab({
   const barChartMinWidth =
     stats.byDate.length > 10 ? `${stats.byDate.length * 48}px` : '100%';
 
+  const showMatrixFeedback = (
+    status: 'image-copied' | 'image-downloaded' | 'excel-copied' | 'error',
+  ) => {
+    setMatrixCopyFeedback(status);
+    window.setTimeout(() => {
+      setMatrixCopyFeedback((current) => (current === status ? null : current));
+    }, 2200);
+  };
+
+  const handleCopyMatrixImage = async () => {
+    if (copyingMatrix) return;
+    setCopyingMatrix(true);
+    try {
+      const outcome = await copyMatrixAsImage({
+        contratas: stats.contratas,
+        matrixRows: stats.matrixRows,
+        matrixTotalsByContrata: stats.matrixTotalsByContrata,
+        totalField: stats.totalField,
+      });
+      showMatrixFeedback(outcome === 'copied' ? 'image-copied' : 'image-downloaded');
+    } catch {
+      showMatrixFeedback('error');
+    } finally {
+      setCopyingMatrix(false);
+    }
+  };
+
+  const handleCopyMatrixExcel = async () => {
+    if (copyingMatrix) return;
+    setCopyingMatrix(true);
+    try {
+      await copyMatrixForExcel({
+        contratas: stats.contratas,
+        matrixRows: stats.matrixRows,
+        matrixTotalsByContrata: stats.matrixTotalsByContrata,
+        totalField: stats.totalField,
+      });
+      showMatrixFeedback('excel-copied');
+    } catch {
+      showMatrixFeedback('error');
+    } finally {
+      setCopyingMatrix(false);
+    }
+  };
+
   const matrixCard = (
     <div
       className="rounded-xl border overflow-hidden shadow-2xs h-full"
@@ -124,10 +177,55 @@ export default function ChartsTab({
         borderColor: 'var(--pluz-border)',
       }}
     >
-      <div className="px-4 py-3" style={{ backgroundColor: '#3C5A9F' }}>
+      <div
+        className="px-4 py-2.5 flex flex-wrap items-center justify-between gap-2"
+        style={{ backgroundColor: '#3C5A9F' }}
+      >
         <h3 className="text-sm font-bold text-white">
           Matriz Especialidad vs. Contratista
         </h3>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleCopyMatrixImage}
+            disabled={copyingMatrix}
+            aria-label="Copiar matriz como imagen"
+            title="Copiar matriz como imagen PNG al portapapeles"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-white bg-white/15 hover:bg-white/25 border border-white/25 transition-colors cursor-pointer disabled:opacity-50"
+          >
+            {matrixCopyFeedback === 'image-copied' ||
+            matrixCopyFeedback === 'image-downloaded' ? (
+              <Check className="w-3.5 h-3.5 text-emerald-200" />
+            ) : (
+              <ImageIcon className="w-3.5 h-3.5" />
+            )}
+            <span>
+              {matrixCopyFeedback === 'image-copied'
+                ? 'Imagen copiada'
+                : matrixCopyFeedback === 'image-downloaded'
+                  ? 'PNG descargado'
+                  : 'Copiar imagen'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleCopyMatrixExcel}
+            disabled={copyingMatrix}
+            aria-label="Copiar matriz para Excel"
+            title="Copiar tabla con formato para pegar en Excel"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-white bg-white/15 hover:bg-white/25 border border-white/25 transition-colors cursor-pointer disabled:opacity-50"
+          >
+            {matrixCopyFeedback === 'excel-copied' ? (
+              <Check className="w-3.5 h-3.5 text-emerald-200" />
+            ) : (
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+            )}
+            <span>
+              {matrixCopyFeedback === 'excel-copied' ? 'Copiado' : 'Copiar Excel'}
+            </span>
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
@@ -390,6 +488,23 @@ export default function ChartsTab({
     </div>
   );
 
+  const refreshButton = onRefresh ? (
+    <button
+      type="button"
+      onClick={onRefresh}
+      disabled={loading}
+      className="tactile-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer disabled:opacity-60 shrink-0"
+      style={{
+        borderColor: 'var(--pluz-border)',
+        color: 'var(--pluz-primary)',
+        backgroundColor: 'var(--pluz-surface)',
+      }}
+    >
+      <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+      <span>{loading ? 'Actualizando...' : 'Actualizar'}</span>
+    </button>
+  ) : null;
+
   return (
     <div className="space-y-6">
       {/* Admin Filter Bar */}
@@ -401,11 +516,11 @@ export default function ChartsTab({
             borderColor: 'var(--pluz-border)',
           }}
         >
-          {/* Row 1: Rango de Fechas & Actualizar */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-3">
-              {fechaInicio && fechaFin && onFechaRangeChange && (
-                allowDateChange ? (
+          {/* Row 1: Rango de Fechas & Actualizar (solo visible cuando está desbloqueado) */}
+          {allowDateChange && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                {fechaInicio && fechaFin && onFechaRangeChange && (
                   <div className="flex flex-wrap items-center gap-2">
                     <span
                       className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider"
@@ -459,101 +574,63 @@ export default function ChartsTab({
                       />
                     </label>
                   </div>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider"
-                      style={{ color: 'var(--pluz-muted)' }}
-                    >
-                      <Calendar className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
-                      Fecha de Consulta:
-                    </span>
-                    <span
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-semibold rounded-lg border select-none"
-                      style={{
-                        borderColor: 'var(--pluz-border)',
-                        color: 'var(--pluz-ink)',
-                        backgroundColor: 'var(--pluz-bg)',
-                      }}
-                      title="Vista restringida al día de hoy"
-                    >
-                      <span>{fechaInicio}</span>
-                      <span
-                        className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded"
-                        style={{
-                          backgroundColor: 'rgba(60, 90, 159, 0.12)',
-                          color: 'var(--pluz-primary)',
-                        }}
-                      >
-                        Solo Hoy
-                      </span>
-                    </span>
-                  </div>
-                )
-              )}
-            </div>
+                )}
+              </div>
 
-            {onRefresh && (
-              <button
-                type="button"
-                onClick={onRefresh}
-                disabled={loading}
-                className="tactile-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer disabled:opacity-60"
-                style={{
-                  borderColor: 'var(--pluz-border)',
-                  color: 'var(--pluz-primary)',
-                  backgroundColor: 'var(--pluz-surface)',
-                }}
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                <span>{loading ? 'Actualizando...' : 'Actualizar'}</span>
-              </button>
-            )}
-          </div>
+              {refreshButton}
+            </div>
+          )}
 
           {/* Row 2: Contratistas Chips */}
-          {contrataOptions.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider mr-1"
-                style={{ color: 'var(--pluz-muted)' }}
-              >
-                <Building2 className="w-3.5 h-3.5" style={{ color: 'var(--pluz-primary)' }} />
-                Contratistas:
-              </span>
-              <button
-                type="button"
-                onClick={() => setSelectedContratas([])}
-                className="px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer"
-                style={{
-                  backgroundColor:
-                    selectedContratas.length === 0 ? 'var(--pluz-primary)' : 'var(--pluz-bg)',
-                  color: selectedContratas.length === 0 ? '#FFFFFF' : 'var(--pluz-ink)',
-                  borderColor:
-                    selectedContratas.length === 0 ? 'var(--pluz-primary)' : 'var(--pluz-border)',
-                }}
-              >
-                Todas
-              </button>
-              {contrataOptions.map((c) => {
-                const active = selectedContratas.includes(c);
-                return (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => toggleContrata(c)}
-                    className="px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer"
-                    style={{
-                      backgroundColor: active ? 'var(--pluz-primary)' : 'var(--pluz-surface)',
-                      color: active ? '#FFFFFF' : 'var(--pluz-ink)',
-                      borderColor: active ? 'var(--pluz-primary)' : 'var(--pluz-border)',
-                    }}
-                  >
-                    {c}
-                  </button>
-                );
-              })}
+          {contrataOptions.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider mr-1"
+                  style={{ color: 'var(--pluz-muted)' }}
+                >
+                  <Building2 className="w-3.5 h-3.5" style={{ color: 'var(--pluz-primary)' }} />
+                  Contratistas:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedContratas([])}
+                  className="px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer"
+                  style={{
+                    backgroundColor:
+                      selectedContratas.length === 0 ? 'var(--pluz-primary)' : 'var(--pluz-bg)',
+                    color: selectedContratas.length === 0 ? '#FFFFFF' : 'var(--pluz-ink)',
+                    borderColor:
+                      selectedContratas.length === 0 ? 'var(--pluz-primary)' : 'var(--pluz-border)',
+                  }}
+                >
+                  Todas
+                </button>
+                {contrataOptions.map((c) => {
+                  const active = selectedContratas.includes(c);
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => toggleContrata(c)}
+                      className="px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer"
+                      style={{
+                        backgroundColor: active ? 'var(--pluz-primary)' : 'var(--pluz-surface)',
+                        color: active ? '#FFFFFF' : 'var(--pluz-ink)',
+                        borderColor: active ? 'var(--pluz-primary)' : 'var(--pluz-border)',
+                      }}
+                    >
+                      {c}
+                    </button>
+                  );
+                })}
+              </div>
+              {!allowDateChange && refreshButton}
             </div>
+          ) : (
+            !allowDateChange && refreshButton && (
+              <div className="flex justify-end">{refreshButton}</div>
+            )
           )}
 
           {/* Row 3: Especialidades de Campo Chips */}
