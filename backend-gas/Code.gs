@@ -68,15 +68,16 @@ function doGet(e) {
     }
 
     if (action === 'getCatalogs') {
-      const catalogs = sheetToObjects(SHEETS.CATALOGOS)
-        .map(c => ({
-          tipo: c.tipo,
-          frente: c.frente,
-          valor: c.valor,
-          orden: Number(c.orden) || 1,
-          activo: String(c.activo).toUpperCase() === 'TRUE',
-        }))
-        .filter(c => c.activo);
+      const allCatalogs = sheetToObjects(SHEETS.CATALOGOS).map(c => ({
+        tipo: c.tipo,
+        frente: c.frente,
+        valor: c.valor,
+        orden: Number(c.orden) || 1,
+        activo: String(c.activo).toUpperCase() === 'TRUE',
+      }));
+      const catalogs = found.rol === 'ADMIN'
+        ? allCatalogs
+        : allCatalogs.filter(c => c.activo);
       return jsonResponse({ ok: true, catalogs });
     }
 
@@ -98,15 +99,16 @@ function doGet(e) {
       if (!found) {
         return jsonResponse({ ok: false, error: 'Credenciales inválidas o usuario inactivo.' });
       }
-      const catalogs = sheetToObjects(SHEETS.CATALOGOS)
-        .map(c => ({
-          tipo: c.tipo,
-          frente: c.frente,
-          valor: c.valor,
-          orden: Number(c.orden) || 1,
-          activo: String(c.activo).toUpperCase() === 'TRUE',
-        }))
-        .filter(c => c.activo);
+      const allCatalogs = sheetToObjects(SHEETS.CATALOGOS).map(c => ({
+        tipo: c.tipo,
+        frente: c.frente,
+        valor: c.valor,
+        orden: Number(c.orden) || 1,
+        activo: String(c.activo).toUpperCase() === 'TRUE',
+      }));
+      const catalogs = found.rol === 'ADMIN'
+        ? allCatalogs
+        : allCatalogs.filter(c => c.activo);
       const contratas = [...new Set(
         users.filter(u => u.rol === 'CONTRATA' && u.activo.toUpperCase() === 'TRUE').map(u => u.contratista)
       )];
@@ -141,6 +143,22 @@ function doGet(e) {
       const allRows = sheetToObjects(SHEETS.TURNOS);
       const filtered = allRows.filter(r => {
         if (r.fecha !== fecha) return false;
+        if (rol === 'ADMIN' && (contratista === 'ALL' || !contratista)) return true;
+        return r.contratista === contratista;
+      });
+      return jsonResponse({ ok: true, rows: filtered });
+    }
+
+    if (action === 'getTurnsRange') {
+      const fechaInicio = (e.parameter.fechaInicio || '').trim();
+      const fechaFin = (e.parameter.fechaFin || '').trim();
+      const contratista = (e.parameter.contratista || '').trim();
+      const rol = (e.parameter.rol || 'CONTRATA').trim();
+      const allRows = sheetToObjects(SHEETS.TURNOS);
+      const filtered = allRows.filter(r => {
+        if (!r.fecha) return false;
+        if (fechaInicio && r.fecha < fechaInicio) return false;
+        if (fechaFin && r.fecha > fechaFin) return false;
         if (rol === 'ADMIN' && (contratista === 'ALL' || !contratista)) return true;
         return r.contratista === contratista;
       });
@@ -238,20 +256,54 @@ function doPost(e) {
         return jsonResponse({ ok: false, error: 'Solo ADMIN puede modificar catálogos.' });
       }
       const sheet = getSheet(SHEETS.CATALOGOS);
-      const headers = sheet.getRange(1, 1, 1, 5).getValues()[0];
-      const newRows = (body.items || []).map(c => [
+      const rawHeaders = sheet.getLastRow() >= 1
+        ? sheet.getRange(1, 1, 1, 5).getValues()[0].map(h => String(h || '').trim())
+        : [];
+      const defaultHeaders = ['tipo', 'frente', 'valor', 'orden', 'activo'];
+      const headers = defaultHeaders.map((def, idx) => rawHeaders[idx] || def);
+
+      const sanitizedItems = (Array.isArray(body.items) ? body.items : [])
+        .map((c, idx) => ({
+          tipo: String(c.tipo || '').trim().toUpperCase(),
+          frente: String(c.frente || 'ALL').trim().toUpperCase(),
+          valor: String(c.valor || '').trim(),
+          orden: Number(c.orden) || (idx + 1),
+          activo: c.activo === true || String(c.activo).toUpperCase() === 'TRUE',
+        }))
+        .filter(c => c.tipo && c.valor);
+
+      const newRows = sanitizedItems.map(c => [
         c.tipo,
         c.frente,
         c.valor,
-        Number(c.orden) || 1,
+        c.orden,
         c.activo ? 'TRUE' : 'FALSE',
       ]);
+
       sheet.clearContents();
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
       if (newRows.length > 0) {
+        sheet.getRange(2, 1, newRows.length, 1).setNumberFormat('@');
+        sheet.getRange(2, 2, newRows.length, 1).setNumberFormat('@');
+        sheet.getRange(2, 3, newRows.length, 1).setNumberFormat('@');
         sheet.getRange(2, 1, newRows.length, headers.length).setValues(newRows);
       }
-      return jsonResponse({ ok: true });
+
+      try {
+        const auditSheet = getSheet(SHEETS.AUDITORIA);
+        auditSheet.appendRow([
+          new Date().toISOString(),
+          body.usuario || 'ADMIN',
+          'ALL',
+          '',
+          'SAVE_CATALOG',
+          sanitizedItems.length,
+        ]);
+      } catch (auditErr) {
+        // No bloquear el guardado si falla la hoja de auditoría
+      }
+
+      return jsonResponse({ ok: true, items: sanitizedItems, savedCount: sanitizedItems.length });
     }
 
     return jsonResponse({ ok: false, error: 'Acción POST no soportada: ' + action });

@@ -6,12 +6,14 @@ import { OperationsTab, clearOperationsCache } from './components/OperationsTab'
 import { AdminTurnsView } from './components/AdminTurnsView';
 import { AdminCatalogsTab } from './components/AdminCatalogsTab';
 import { ToastContainer } from './components/ui/ToastContainer';
-import { getCatalogs, getContratas, getTurn } from './services/gasClient';
+import { getCatalogs, getContratas, getTodayIsoDate, getTurn, getTurnsRange } from './services/gasClient';
 import type { CatalogItem, ToastMessage, TurnRow, UserSession } from './types/operalog';
 
 const ChartsTab = lazy(() => import('./components/ChartsTab'));
 
 const SESSION_KEY = 'operalog_user_session_v1';
+export const MASTER_HISTORY_PASSWORD =
+  ((import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_MASTER_PASSWORD ?? '').trim();
 
 export default function App() {
   const [user, setUser] = useState<UserSession | null>(() => {
@@ -22,6 +24,7 @@ export default function App() {
       return null;
     }
   });
+  const [isHistoryUnlocked, setIsHistoryUnlocked] = useState<boolean>(false);
 
   const [activeTab, setActiveTab] = useState<AppTab>(() => {
     try {
@@ -45,6 +48,10 @@ export default function App() {
   const [adminTurnsCache, setAdminTurnsCache] = useState<Record<string, TurnRow[]>>({});
   const [adminLoading, setAdminLoading] = useState<boolean>(false);
   const [adminSelectedContrata, setAdminSelectedContrata] = useState<string>('ALL');
+  const [chartFechaInicio, setChartFechaInicio] = useState<string>(() => getTodayIsoDate());
+  const [chartFechaFin, setChartFechaFin] = useState<string>(() => getTodayIsoDate());
+  const [adminRangeCache, setAdminRangeCache] = useState<Record<string, TurnRow[]>>({});
+  const [adminRangeLoading, setAdminRangeLoading] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const addToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
@@ -61,13 +68,16 @@ export default function App() {
 
   const loadBootstrapData = useCallback(async () => {
     try {
-      const [cats, conts] = await Promise.all([getCatalogs(), getContratas()]);
+      const [cats, conts] = await Promise.all([
+        getCatalogs(user?.rol === 'ADMIN'),
+        getContratas(),
+      ]);
       setCatalogs(cats);
       if (conts.length > 0) setContratas(conts);
     } catch {
       // Silencioso; cada tab maneja su feedback si falla
     }
-  }, []);
+  }, [user?.rol]);
 
   useEffect(() => {
     if (user) {
@@ -97,13 +107,45 @@ export default function App() {
 
   // Para ADMIN, cargar la fecha activa solo si aún no está en caché
   useEffect(() => {
-    if (user?.rol === 'ADMIN' && (activeTab === 'graficos' || activeTab === 'registro')) {
+    if (user?.rol === 'ADMIN' && activeTab === 'registro') {
       void fetchAdminTurns(currentFecha, false);
     }
   }, [user, activeTab, currentFecha, fetchAdminTurns]);
 
+  const fetchAdminTurnsRange = useCallback(
+    async (inicio: string, fin: string, force = false) => {
+      const rangeKey = `${inicio}__${fin}`;
+      if (!force && adminRangeCache[rangeKey]) return;
+      setAdminRangeLoading(true);
+      try {
+        const rangeRows = await getTurnsRange(inicio, fin, 'ALL', 'ADMIN');
+        setAdminRangeCache((prev) => ({ ...prev, [rangeKey]: rangeRows }));
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: 'Error al consultar rango de gráficos',
+          description: err instanceof Error ? err.message : 'Intente nuevamente.',
+        });
+      } finally {
+        setAdminRangeLoading(false);
+      }
+    },
+    [adminRangeCache, addToast],
+  );
+
+  useEffect(() => {
+    if (user?.rol === 'ADMIN' && activeTab === 'graficos') {
+      void fetchAdminTurnsRange(chartFechaInicio, chartFechaFin, false);
+    }
+  }, [user, activeTab, chartFechaInicio, chartFechaFin, fetchAdminTurnsRange]);
+
   const handleLoginSuccess = useCallback((loggedUser: UserSession) => {
+    const today = getTodayIsoDate();
     setUser(loggedUser);
+    setIsHistoryUnlocked(false);
+    setCurrentFecha(today);
+    setChartFechaInicio(today);
+    setChartFechaFin(today);
     try {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(loggedUser));
     } catch {
@@ -113,9 +155,15 @@ export default function App() {
   }, []);
 
   const handleLogout = useCallback(() => {
+    const today = getTodayIsoDate();
     setUser(null);
+    setIsHistoryUnlocked(false);
     setCurrentRows([]);
+    setCurrentFecha(today);
+    setChartFechaInicio(today);
+    setChartFechaFin(today);
     setAdminTurnsCache({});
+    setAdminRangeCache({});
     setAdminSelectedContrata('ALL');
     clearOperationsCache();
     try {
@@ -124,6 +172,36 @@ export default function App() {
       // Ignore
     }
   }, []);
+
+  const handleUnlockHistory = useCallback(
+    (password: string): boolean => {
+      if (MASTER_HISTORY_PASSWORD.length > 0 && password.trim() === MASTER_HISTORY_PASSWORD) {
+        setIsHistoryUnlocked(true);
+        addToast({
+          type: 'success',
+          title: 'Historial desbloqueado',
+          description: 'Ya puedes consultar todos los días y administrar Catálogos.',
+        });
+        return true;
+      }
+      return false;
+    },
+    [addToast],
+  );
+
+  const handleLockHistory = useCallback(() => {
+    const today = getTodayIsoDate();
+    setIsHistoryUnlocked(false);
+    setCurrentFecha(today);
+    setChartFechaInicio(today);
+    setChartFechaFin(today);
+    setActiveTab((prev) => (prev === 'catalogos' ? 'graficos' : prev));
+    addToast({
+      type: 'info',
+      title: 'Vista restringida a hoy',
+      description: 'El historial de días anteriores y Catálogos han sido bloqueados.',
+    });
+  }, [addToast]);
 
   const handleRowsChange = useCallback((rows: TurnRow[], fecha: string) => {
     setCurrentRows(rows);
@@ -149,7 +227,8 @@ export default function App() {
   }
 
   const adminRowsForDate = adminTurnsCache[currentFecha] ?? [];
-  const chartRows = user.rol === 'ADMIN' ? adminRowsForDate : currentRows;
+  const adminRangeRows = adminRangeCache[`${chartFechaInicio}__${chartFechaFin}`] ?? [];
+  const chartRows = user.rol === 'ADMIN' ? adminRangeRows : currentRows;
 
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--pluz-bg)' }}>
@@ -158,6 +237,9 @@ export default function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onLogout={handleLogout}
+        isHistoryUnlocked={isHistoryUnlocked}
+        onUnlockHistory={handleUnlockHistory}
+        onLockHistory={handleLockHistory}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
@@ -165,7 +247,11 @@ export default function App() {
           (user.rol === 'ADMIN' ? (
             <AdminTurnsView
               fecha={currentFecha}
-              onFechaChange={setCurrentFecha}
+              onFechaChange={(nextFecha) => {
+                if (!isHistoryUnlocked) return;
+                setCurrentFecha(nextFecha);
+              }}
+              allowDateChange={isHistoryUnlocked}
               contratas={contratas}
               rows={adminRowsForDate}
               loading={adminLoading}
@@ -202,9 +288,20 @@ export default function App() {
               selectedContrata={adminSelectedContrata}
               onSelectedContrataChange={setAdminSelectedContrata}
               fecha={currentFecha}
-              onFechaChange={setCurrentFecha}
-              onRefresh={() => void fetchAdminTurns(currentFecha, true)}
-              loading={adminLoading}
+              onFechaChange={(nextFecha) => {
+                if (!isHistoryUnlocked) return;
+                setCurrentFecha(nextFecha);
+              }}
+              fechaInicio={chartFechaInicio}
+              fechaFin={chartFechaFin}
+              onFechaRangeChange={(inicio, fin) => {
+                if (!isHistoryUnlocked) return;
+                setChartFechaInicio(inicio);
+                setChartFechaFin(fin);
+              }}
+              allowDateChange={isHistoryUnlocked}
+              onRefresh={() => void fetchAdminTurnsRange(chartFechaInicio, chartFechaFin, true)}
+              loading={user.rol === 'ADMIN' ? adminRangeLoading : adminLoading}
               onDrillDownContrata={(contratista) => {
                 setAdminSelectedContrata(contratista);
                 setActiveTab('registro');
@@ -213,7 +310,7 @@ export default function App() {
           </Suspense>
         )}
 
-        {activeTab === 'catalogos' && user.rol === 'ADMIN' && (
+        {activeTab === 'catalogos' && user.rol === 'ADMIN' && isHistoryUnlocked && (
           <AdminCatalogsTab
             catalog={catalogs}
             onCatalogSaved={(updated) => {

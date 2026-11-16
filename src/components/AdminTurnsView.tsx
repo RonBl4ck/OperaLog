@@ -33,6 +33,7 @@ interface AdminTurnsViewProps {
   selectedContrata: string;
   onSelectedContrataChange: (contratista: string) => void;
   onToast: (toast: Omit<ToastMessage, 'id'>) => void;
+  allowDateChange?: boolean;
 }
 
 function escapeCsvCell(value: string): string {
@@ -212,6 +213,7 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
   selectedContrata,
   onSelectedContrataChange,
   onToast,
+  allowDateChange = true,
 }) => {
   const [selectedContratas, setSelectedContratas] = useState<string[]>(() =>
     selectedContrata && selectedContrata !== 'ALL' ? [selectedContrata] : [],
@@ -381,21 +383,48 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             {/* Fecha */}
-            <label className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--pluz-muted)' }}>
-              <Calendar className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
-              <span>Fecha:</span>
-              <input
-                type="date"
-                value={fecha}
-                onChange={(e) => onFechaChange(e.target.value)}
-                className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
-                style={{
-                  borderColor: 'var(--pluz-border)',
-                  color: 'var(--pluz-ink)',
-                  backgroundColor: 'var(--pluz-surface)',
-                }}
-              />
-            </label>
+            {allowDateChange ? (
+              <label className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--pluz-muted)' }}>
+                <Calendar className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
+                <span>Fecha:</span>
+                <input
+                  type="date"
+                  value={fecha}
+                  onChange={(e) => onFechaChange(e.target.value)}
+                  className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
+                  style={{
+                    borderColor: 'var(--pluz-border)',
+                    color: 'var(--pluz-ink)',
+                    backgroundColor: 'var(--pluz-surface)',
+                  }}
+                />
+              </label>
+            ) : (
+              <div className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--pluz-muted)' }}>
+                <Calendar className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
+                <span>Fecha:</span>
+                <span
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-semibold rounded-lg border select-none"
+                  style={{
+                    borderColor: 'var(--pluz-border)',
+                    color: 'var(--pluz-ink)',
+                    backgroundColor: 'var(--pluz-bg)',
+                  }}
+                  title="Vista restringida al día de hoy"
+                >
+                  <span>{fecha}</span>
+                  <span
+                    className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded"
+                    style={{
+                      backgroundColor: 'rgba(60, 90, 159, 0.12)',
+                      color: 'var(--pluz-primary)',
+                    }}
+                  >
+                    Solo Hoy
+                  </span>
+                </span>
+              </div>
+            )}
 
             {/* Contratista (Selección múltiple) */}
             <MultiSelectDropdown

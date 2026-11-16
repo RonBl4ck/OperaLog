@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -8,358 +8,342 @@ import {
   Tooltip,
   Legend,
   CartesianGrid,
+  ReferenceLine,
+  LabelList,
+  PieChart,
+  Pie,
   Cell,
 } from 'recharts';
 import {
-  Users,
   HardHat,
-  Headset,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
+  Wrench,
+  LifeBuoy,
+  Truck,
+  ShieldAlert,
   Building2,
   Calendar,
   RefreshCw,
+  Filter,
 } from 'lucide-react';
-import { computeCapacityStats } from '../utils/capacityStats';
 import {
-  FRONT_CONFIGS,
-  type CatalogItem,
-  type FrontType,
-  type TurnRow,
-  type UserSession,
-} from '../types/operalog';
+  FIELD_CATEGORIES,
+  computeFieldDashboardStats,
+  type FieldCategoryId,
+} from '../utils/capacityStats';
+import type { CatalogItem, TurnRow, UserSession } from '../types/operalog';
 
 export interface ChartsTabProps {
   rows: TurnRow[];
-  horariosCatalog: string[] | CatalogItem[];
+  horariosCatalog?: string[] | CatalogItem[];
   user: UserSession;
   contratas?: string[];
   selectedContrata?: string;
   onSelectedContrataChange?: (contratista: string) => void;
   fecha?: string;
   onFechaChange?: (fecha: string) => void;
+  fechaInicio?: string;
+  fechaFin?: string;
+  onFechaRangeChange?: (inicio: string, fin: string) => void;
   onRefresh?: () => void;
   loading?: boolean;
   onDrillDownContrata?: (contratista: string) => void;
+  allowDateChange?: boolean;
 }
 
-const FRONT_COLORS: Record<FrontType, string> = {
-  COORDINADORES: '#3C5A9F',
-  'SUPERVISORES CAPA': '#5573B8',
-  LOCALIZADORES: '#64748B',
-  DESPACHADORES: '#94A3B8',
-  RECLAMOS: '#6CAB5E',
-  TEKO: '#4F9442',
-  REPARACIONES: '#88C07C',
-};
+const COMPANY_COLORS = [
+  '#0070F3',
+  '#1E3A8A',
+  '#E67E22',
+  '#6B21A8',
+  '#EC4899',
+  '#10B981',
+  '#0EA5E9',
+  '#F59E0B',
+];
 
-const FRONT_SHORT_LABELS: Record<string, string> = {
-  COORDINADORES: 'Coord.',
-  'SUPERVISORES CAPA': 'Sup. CAPA',
-  LOCALIZADORES: 'Localiz.',
-  DESPACHADORES: 'Despach.',
-  RECLAMOS: 'Reclamos',
-  TEKO: 'Teko',
-  REPARACIONES: 'Reparac.',
+const CATEGORY_ICONS: Record<FieldCategoryId, typeof HardHat> = {
+  RECLAMISTA: HardHat,
+  RECLAMISTA_APOYO: LifeBuoy,
+  REPARACIONES: Wrench,
+  REPARACIONES_APOYO: ShieldAlert,
+  TEKO: Truck,
 };
 
 export default function ChartsTab({
   rows,
-  horariosCatalog,
   user,
   contratas = [],
-  selectedContrata = 'ALL',
-  onSelectedContrataChange,
-  fecha,
-  onFechaChange,
+  fechaInicio,
+  fechaFin,
+  onFechaRangeChange,
   onRefresh,
   loading = false,
-  onDrillDownContrata,
+  allowDateChange = true,
 }: ChartsTabProps) {
-  const horarioStrings = useMemo(
-    () =>
-      horariosCatalog
-        .map((item) =>
-          typeof item === 'string'
-            ? item
-            : item.tipo === 'HORARIO' && item.activo
-            ? item.valor
-            : ''
-        )
-        .filter((v) => v.trim().length > 0),
-    [horariosCatalog]
-  );
-
-  const filteredRows = useMemo(() => {
-    if (user.rol !== 'ADMIN' || selectedContrata === 'ALL') return rows;
-    return rows.filter((r) => r.contratista === selectedContrata);
-  }, [rows, user.rol, selectedContrata]);
-
-  const stats = useMemo(
-    () => computeCapacityStats(filteredRows, horarioStrings),
-    [filteredRows, horarioStrings]
-  );
-
-  const allContrataStats = useMemo(
-    () => computeCapacityStats(rows, horarioStrings),
-    [rows, horarioStrings]
-  );
+  const [selectedContratas, setSelectedContratas] = useState<string[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<FieldCategoryId[]>([]);
 
   const contrataOptions = useMemo(() => {
-    const set = new Set<string>(contratas);
+    const set = new Set<string>(contratas.filter((c) => c.trim().length > 0));
     for (const r of rows) {
-      if (r.contratista) set.add(r.contratista);
+      if (r.contratista.trim()) set.add(r.contratista.trim());
     }
-    return Array.from(set).sort();
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [contratas, rows]);
 
-  const incompleteCount = stats.missingHorarioCount + stats.missingSsamCount;
-  const totalAlertCount = incompleteCount + stats.uncoveredHorarios.length;
-  const alertColor = totalAlertCount > 0 ? '#E63946' : '#6CAB5E';
-
-  const frontChartData = useMemo(
+  const stats = useMemo(
     () =>
-      stats.byFront.map((item) => ({
-        ...item,
-        label: FRONT_SHORT_LABELS[item.frente] ?? item.frente,
-      })),
-    [stats.byFront]
+      computeFieldDashboardStats(rows, {
+        selectedContratas,
+        selectedCategories,
+        allContratas: selectedContratas.length > 0 ? selectedContratas : contrataOptions,
+      }),
+    [rows, selectedContratas, selectedCategories, contrataOptions],
   );
 
-  return (
-    <div className="space-y-6">
-      {/* Admin Filter Bar */}
-      {user.rol === 'ADMIN' && (
-        <div
-          className="rounded-xl border p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-3"
-          style={{
-            backgroundColor: 'var(--pluz-surface)',
-            borderColor: 'var(--pluz-border)',
-          }}
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            {fecha && onFechaChange && (
-              <label className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--pluz-muted)' }}>
-                <Calendar className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
-                <span>Fecha:</span>
-                <input
-                  type="date"
-                  value={fecha}
-                  onChange={(e) => onFechaChange(e.target.value)}
-                  className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
-                  style={{
-                    borderColor: 'var(--pluz-border)',
-                    color: 'var(--pluz-ink)',
-                    backgroundColor: 'var(--pluz-surface)',
-                  }}
-                />
-              </label>
-            )}
+  const toggleContrata = (c: string) => {
+    setSelectedContratas((prev) =>
+      prev.includes(c) ? prev.filter((item) => item !== c) : [...prev, c],
+    );
+  };
 
-            {onSelectedContrataChange && (
-              <label className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--pluz-muted)' }}>
-                <Building2 className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
-                <span>Contratista:</span>
-                <select
-                  value={selectedContrata}
-                  onChange={(e) => onSelectedContrataChange(e.target.value)}
-                  className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
-                  style={{
-                    borderColor: 'var(--pluz-border)',
-                    color: 'var(--pluz-ink)',
-                    backgroundColor: 'var(--pluz-surface)',
-                  }}
-                >
-                  <option value="ALL">Todas las contratistas</option>
-                  {contrataOptions.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-          </div>
+  const toggleCategory = (catId: FieldCategoryId) => {
+    setSelectedCategories((prev) =>
+      prev.includes(catId) ? prev.filter((item) => item !== catId) : [...prev, catId],
+    );
+  };
 
-          {onRefresh && (
-            <button
-              type="button"
-              onClick={onRefresh}
-              disabled={loading}
-              className="tactile-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer disabled:opacity-60"
-              style={{
-                borderColor: 'var(--pluz-border)',
-                color: 'var(--pluz-primary)',
-                backgroundColor: 'var(--pluz-surface)',
-              }}
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              <span>{loading ? 'Actualizando...' : 'Actualizar'}</span>
-            </button>
-          )}
-        </div>
-      )}
-      {/* 4 KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* KPI 1: Total Personal Programado */}
-        <div
-          className="rounded-xl border p-4 shadow-2xs"
-          style={{
-            backgroundColor: 'var(--pluz-surface)',
-            borderColor: 'var(--pluz-border)',
-          }}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span
-              className="text-xs font-semibold uppercase tracking-wider"
-              style={{ color: 'var(--pluz-muted)' }}
-            >
-              Total Personal Programado
-            </span>
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: 'rgba(60, 90, 159, 0.12)' }}
-            >
-              <Users className="w-4 h-4" style={{ color: '#3C5A9F' }} />
-            </div>
-          </div>
-          <p className="text-2xl font-bold tabular-nums" style={{ color: '#3C5A9F' }}>
-            {stats.total}
-          </p>
-          <p className="text-xs mt-1" style={{ color: 'var(--pluz-muted)' }}>
-            Registros con nombre asignado
-          </p>
-        </div>
+  const barChartMinWidth =
+    stats.byDate.length > 10 ? `${stats.byDate.length * 48}px` : '100%';
 
-        {/* KPI 2: Personal en Campo */}
-        <div
-          className="rounded-xl border p-4 shadow-2xs"
-          style={{
-            backgroundColor: 'var(--pluz-surface)',
-            borderColor: 'var(--pluz-border)',
-          }}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span
-              className="text-xs font-semibold uppercase tracking-wider"
-              style={{ color: 'var(--pluz-muted)' }}
-            >
-              Personal en Campo
-            </span>
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: 'rgba(108, 171, 94, 0.14)' }}
-            >
-              <HardHat className="w-4 h-4" style={{ color: '#6CAB5E' }} />
-            </div>
-          </div>
-          <p className="text-2xl font-bold tabular-nums" style={{ color: '#6CAB5E' }}>
-            {stats.campoCount}
-          </p>
-          <p className="text-xs mt-1" style={{ color: 'var(--pluz-muted)' }}>
-            Reclamos / Teko / Reparaciones
-          </p>
-        </div>
-
-        {/* KPI 3: Personal de Soporte */}
-        <div
-          className="rounded-xl border p-4 shadow-2xs"
-          style={{
-            backgroundColor: 'var(--pluz-surface)',
-            borderColor: 'var(--pluz-border)',
-          }}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span
-              className="text-xs font-semibold uppercase tracking-wider"
-              style={{ color: 'var(--pluz-muted)' }}
-            >
-              Personal de Soporte
-            </span>
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: 'rgba(100, 116, 139, 0.14)' }}
-            >
-              <Headset className="w-4 h-4" style={{ color: '#64748B' }} />
-            </div>
-          </div>
-          <p className="text-2xl font-bold tabular-nums" style={{ color: '#64748B' }}>
-            {stats.soporteCount}
-          </p>
-          <p className="text-xs mt-1" style={{ color: 'var(--pluz-muted)' }}>
-            Coord / Sup / Loc / Desp
-          </p>
-        </div>
-
-        {/* KPI 4: Alertas / Sin Horario o SSAM */}
-        <div
-          className="rounded-xl border p-4 shadow-2xs"
-          style={{
-            backgroundColor: 'var(--pluz-surface)',
-            borderColor:
-              totalAlertCount > 0 ? 'rgba(230, 57, 70, 0.35)' : 'var(--pluz-border)',
-          }}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span
-              className="text-xs font-semibold uppercase tracking-wider"
-              style={{ color: 'var(--pluz-muted)' }}
-            >
-              Alertas / Sin Horario o SSAM
-            </span>
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{
-                backgroundColor:
-                  totalAlertCount > 0
-                    ? 'rgba(230, 57, 70, 0.12)'
-                    : 'rgba(108, 171, 94, 0.14)',
-              }}
-            >
-              {totalAlertCount > 0 ? (
-                <AlertTriangle className="w-4 h-4" style={{ color: alertColor }} />
-              ) : (
-                <CheckCircle2 className="w-4 h-4" style={{ color: alertColor }} />
-              )}
-            </div>
-          </div>
-          <p className="text-2xl font-bold tabular-nums" style={{ color: alertColor }}>
-            {incompleteCount}
-          </p>
-          <p className="text-xs mt-1" style={{ color: 'var(--pluz-muted)' }}>
-            {stats.uncoveredHorarios.length} horario(s) sin cobertura
-          </p>
-        </div>
+  const matrixCard = (
+    <div
+      className="rounded-xl border overflow-hidden shadow-2xs h-full"
+      style={{
+        backgroundColor: 'var(--pluz-surface)',
+        borderColor: 'var(--pluz-border)',
+      }}
+    >
+      <div className="px-4 py-3" style={{ backgroundColor: '#3C5A9F' }}>
+        <h3 className="text-sm font-bold text-white">
+          Matriz Especialidad vs. Contratista
+        </h3>
       </div>
 
-      {/* Charts Grid: Chart 1 & Chart 2 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Chart 1: Capacidad por Frente */}
-        <div
-          className="rounded-xl border p-5 shadow-2xs"
-          style={{
-            backgroundColor: 'var(--pluz-surface)',
-            borderColor: 'var(--pluz-border)',
-          }}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-bold" style={{ color: 'var(--pluz-ink)' }}>
-                Capacidad por Frente
-              </h3>
-              <p className="text-xs" style={{ color: 'var(--pluz-muted)' }}>
-                Verde: Campo • Azul: Soporte operativo
-              </p>
-            </div>
-          </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs text-left border-collapse">
+          <thead>
+            <tr style={{ backgroundColor: '#EEF2FF', color: '#1E3A8A' }}>
+              <th className="py-2.5 px-3 font-bold border-b border-slate-200">
+                Especialidad
+              </th>
+              {stats.contratas.map((c) => (
+                <th
+                  key={c}
+                  className="py-2.5 px-2.5 font-bold text-right border-b border-slate-200 whitespace-nowrap"
+                >
+                  {c}
+                </th>
+              ))}
+              <th className="py-2.5 px-3 font-bold text-right border-b border-slate-200">
+                Total
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {stats.matrixRows.map((mRow, idx) => (
+              <tr
+                key={mRow.category}
+                className="transition-colors hover:bg-slate-50"
+                style={{
+                  backgroundColor: idx % 2 === 1 ? '#F8FAFC' : '#FFFFFF',
+                }}
+              >
+                <td
+                  className="py-2 px-3 font-semibold border-b border-slate-100 whitespace-nowrap"
+                  style={{ color: 'var(--pluz-ink)' }}
+                >
+                  {mRow.label}
+                </td>
+                {stats.contratas.map((c) => {
+                  const val = mRow.countsByContrata[c] ?? 0;
+                  return (
+                    <td
+                      key={c}
+                      className="py-2 px-2.5 text-right tabular-nums border-b border-slate-100"
+                      style={{
+                        color: val > 0 ? 'var(--pluz-ink)' : '#94A3B8',
+                      }}
+                    >
+                      {val}
+                    </td>
+                  );
+                })}
+                <td
+                  className="py-2 px-3 text-right font-bold tabular-nums border-b border-slate-100"
+                  style={{ color: '#3C5A9F' }}
+                >
+                  {mRow.total}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{ backgroundColor: '#F1F5F9' }}>
+              <td
+                className="py-2.5 px-3 font-bold border-t border-slate-300"
+                style={{ color: 'var(--pluz-ink)' }}
+              >
+                Total
+              </td>
+              {stats.contratas.map((c) => (
+                <td
+                  key={c}
+                  className="py-2.5 px-2.5 text-right font-bold tabular-nums border-t border-slate-300"
+                  style={{ color: 'var(--pluz-ink)' }}
+                >
+                  {stats.matrixTotalsByContrata[c] ?? 0}
+                </td>
+              ))}
+              <td
+                className="py-2.5 px-3 text-right font-bold tabular-nums border-t border-slate-300"
+                style={{ color: '#3C5A9F' }}
+              >
+                {stats.totalField}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
 
-          <div className="h-72 w-full">
+  const companyShareCard = (
+    <div
+      className="rounded-xl border overflow-hidden shadow-2xs h-full"
+      style={{
+        backgroundColor: 'var(--pluz-surface)',
+        borderColor: 'var(--pluz-border)',
+      }}
+    >
+      <div className="px-4 py-3" style={{ backgroundColor: '#3C5A9F' }}>
+        <h3 className="text-sm font-bold text-white">
+          Participación de Recursos por Empresa
+        </h3>
+      </div>
+
+      <div className="p-4">
+        {stats.companyShare.length === 0 ? (
+          <div
+            className="h-56 flex items-center justify-center text-sm"
+            style={{ color: 'var(--pluz-muted)' }}
+          >
+            Sin datos de participación para mostrar.
+          </div>
+        ) : (
+          <div className="flex flex-col sm:flex-row items-center gap-4">
+            <div className="h-56 w-full sm:w-3/5">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={stats.companyShare}
+                    dataKey="count"
+                    nameKey="contratista"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={48}
+                    outerRadius={78}
+                    paddingAngle={2}
+                  >
+                    {stats.companyShare.map((entry, idx) => (
+                      <Cell
+                        key={entry.contratista}
+                        fill={COMPANY_COLORS[idx % COMPANY_COLORS.length]}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      borderRadius: '10px',
+                      borderColor: '#E2E8F0',
+                      fontSize: '12px',
+                    }}
+                    formatter={(value: number, name: string) => [
+                      `${value} cuadrillas`,
+                      name,
+                    ]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            <ul className="w-full sm:w-2/5 space-y-2 text-xs">
+              {stats.companyShare.map((entry, idx) => (
+                <li
+                  key={entry.contratista}
+                  className="flex items-center justify-between gap-2"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{
+                        backgroundColor: COMPANY_COLORS[idx % COMPANY_COLORS.length],
+                      }}
+                    />
+                    <span
+                      className="font-semibold truncate"
+                      style={{ color: 'var(--pluz-ink)' }}
+                    >
+                      {entry.contratista}
+                    </span>
+                  </span>
+                  <span
+                    className="font-bold tabular-nums shrink-0"
+                    style={{ color: 'var(--pluz-muted)' }}
+                  >
+                    {entry.percentage}% ({entry.count})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const specialtyByCompanyCard = (
+    <div
+      className="rounded-xl border overflow-hidden shadow-2xs"
+      style={{
+        backgroundColor: 'var(--pluz-surface)',
+        borderColor: 'var(--pluz-border)',
+      }}
+    >
+      <div className="px-4 py-3" style={{ backgroundColor: '#3C5A9F' }}>
+        <h3 className="text-sm font-bold text-white">
+          Total Cuadrillas por Especialidad y Empresa
+        </h3>
+        <p className="text-[11px] text-blue-100">
+          Comparativa horizontal agrupada por contratista
+        </p>
+      </div>
+
+      <div className="p-4">
+        {stats.contratas.length === 0 || stats.totalField === 0 ? (
+          <div
+            className="h-72 flex items-center justify-center text-sm"
+            style={{ color: 'var(--pluz-muted)' }}
+          >
+            Sin datos de especialidades por empresa para mostrar.
+          </div>
+        ) : (
+          <div className="h-80 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={frontChartData}
+                data={stats.byCategoryCompany}
                 layout="vertical"
-                margin={{ top: 4, right: 20, left: 16, bottom: 4 }}
+                margin={{ top: 8, right: 28, left: 16, bottom: 8 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
                 <XAxis
@@ -370,303 +354,490 @@ export default function ChartsTab({
                 <YAxis
                   type="category"
                   dataKey="label"
-                  width={84}
+                  width={136}
                   tick={{ fontSize: 11, fill: '#0F172A', fontWeight: 600 }}
                 />
                 <Tooltip
-                  cursor={{ fill: 'rgba(60, 90, 159, 0.06)' }}
                   contentStyle={{
                     borderRadius: '10px',
                     borderColor: '#E2E8F0',
                     fontSize: '12px',
                   }}
                 />
-                <Bar dataKey="count" name="Personal" radius={[0, 6, 6, 0]} barSize={22}>
-                  {frontChartData.map((entry) => (
-                    <Cell
-                      key={entry.frente}
-                      fill={entry.isField ? '#6CAB5E' : '#3C5A9F'}
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
+                {stats.contratas.map((c, idx) => (
+                  <Bar
+                    key={c}
+                    dataKey={c}
+                    name={c}
+                    fill={COMPANY_COLORS[idx % COMPANY_COLORS.length]}
+                    radius={[0, 4, 4, 0]}
+                    barSize={12}
+                  >
+                    <LabelList
+                      dataKey={c}
+                      position="right"
+                      style={{ fontSize: '10px', fontWeight: 600, fill: '#334155' }}
+                      formatter={(v: number) => (v > 0 ? v : '')}
                     />
-                  ))}
-                </Bar>
+                  </Bar>
+                ))}
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
-
-        {/* Chart 2: Cobertura por Horario */}
-        <div
-          className="rounded-xl border p-5 shadow-2xs"
-          style={{
-            backgroundColor: 'var(--pluz-surface)',
-            borderColor: 'var(--pluz-border)',
-          }}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-bold" style={{ color: 'var(--pluz-ink)' }}>
-                Cobertura por Horario
-              </h3>
-              <p className="text-xs" style={{ color: 'var(--pluz-muted)' }}>
-                Distribución apilada por frente y detección de turnos descubiertos
-              </p>
-            </div>
-            <Clock className="w-4 h-4" style={{ color: 'var(--pluz-muted)' }} />
-          </div>
-
-          <div className="h-72 w-full">
-            {stats.byHorario.length === 0 ? (
-              <div
-                className="h-full flex items-center justify-center text-sm"
-                style={{ color: 'var(--pluz-muted)' }}
-              >
-                No hay horarios configurados en el catálogo.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={stats.byHorario}
-                  margin={{ top: 4, right: 12, left: 0, bottom: 16 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
-                  <XAxis
-                    dataKey="horario"
-                    tick={{ fontSize: 10, fill: '#0F172A' }}
-                    interval={0}
-                    angle={-15}
-                    textAnchor="end"
-                    height={46}
-                  />
-                  <YAxis
-                    allowDecimals={false}
-                    tick={{ fontSize: 11, fill: '#64748B' }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      borderRadius: '10px',
-                      borderColor: '#E2E8F0',
-                      fontSize: '12px',
-                    }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: '11px' }} />
-                  {FRONT_CONFIGS.map((cfg) => (
-                    <Bar
-                      key={cfg.id}
-                      dataKey={cfg.id}
-                      name={FRONT_SHORT_LABELS[cfg.id] ?? cfg.label}
-                      stackId="front"
-                      fill={FRONT_COLORS[cfg.id]}
-                    />
-                  ))}
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
+        )}
       </div>
+    </div>
+  );
 
-      {/* Chart 3 (ADMIN only): Comparativa por Contratista */}
+  return (
+    <div className="space-y-6">
+      {/* Admin Filter Bar */}
       {user.rol === 'ADMIN' && (
         <div
-          className="rounded-xl border p-5 shadow-2xs"
+          className="rounded-xl border p-4 shadow-2xs space-y-3.5"
           style={{
             backgroundColor: 'var(--pluz-surface)',
             borderColor: 'var(--pluz-border)',
           }}
         >
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-bold" style={{ color: 'var(--pluz-ink)' }}>
-                Comparativa por Contratista
-              </h3>
-              <p className="text-xs" style={{ color: 'var(--pluz-muted)' }}>
-                Personal en campo vs. soporte operativo por contratista (haz clic en una barra para ver el detalle)
-              </p>
+          {/* Row 1: Rango de Fechas & Actualizar */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              {fechaInicio && fechaFin && onFechaRangeChange && (
+                allowDateChange ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider"
+                      style={{ color: 'var(--pluz-muted)' }}
+                    >
+                      <Calendar className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
+                      Rango de Fechas:
+                    </span>
+                    <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--pluz-muted)' }}>
+                      <span>Desde</span>
+                      <input
+                        type="date"
+                        aria-label="Fecha inicio"
+                        value={fechaInicio}
+                        onChange={(e) => {
+                          const nextInicio = e.target.value;
+                          if (!nextInicio) return;
+                          onFechaRangeChange(
+                            nextInicio,
+                            nextInicio > fechaFin ? nextInicio : fechaFin,
+                          );
+                        }}
+                        className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
+                        style={{
+                          borderColor: 'var(--pluz-border)',
+                          color: 'var(--pluz-ink)',
+                          backgroundColor: 'var(--pluz-surface)',
+                        }}
+                      />
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--pluz-muted)' }}>
+                      <span>Hasta</span>
+                      <input
+                        type="date"
+                        aria-label="Fecha fin"
+                        value={fechaFin}
+                        onChange={(e) => {
+                          const nextFin = e.target.value;
+                          if (!nextFin) return;
+                          onFechaRangeChange(
+                            nextFin < fechaInicio ? nextFin : fechaInicio,
+                            nextFin,
+                          );
+                        }}
+                        className="px-2.5 py-1.5 text-sm rounded-lg border outline-none"
+                        style={{
+                          borderColor: 'var(--pluz-border)',
+                          color: 'var(--pluz-ink)',
+                          backgroundColor: 'var(--pluz-surface)',
+                        }}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider"
+                      style={{ color: 'var(--pluz-muted)' }}
+                    >
+                      <Calendar className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
+                      Fecha de Consulta:
+                    </span>
+                    <span
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-semibold rounded-lg border select-none"
+                      style={{
+                        borderColor: 'var(--pluz-border)',
+                        color: 'var(--pluz-ink)',
+                        backgroundColor: 'var(--pluz-bg)',
+                      }}
+                      title="Vista restringida al día de hoy"
+                    >
+                      <span>{fechaInicio}</span>
+                      <span
+                        className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded"
+                        style={{
+                          backgroundColor: 'rgba(60, 90, 159, 0.12)',
+                          color: 'var(--pluz-primary)',
+                        }}
+                      >
+                        Solo Hoy
+                      </span>
+                    </span>
+                  </div>
+                )
+              )}
             </div>
-            <Building2 className="w-4 h-4" style={{ color: 'var(--pluz-primary)' }} />
+
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={loading}
+                className="tactile-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer disabled:opacity-60"
+                style={{
+                  borderColor: 'var(--pluz-border)',
+                  color: 'var(--pluz-primary)',
+                  backgroundColor: 'var(--pluz-surface)',
+                }}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <span>{loading ? 'Actualizando...' : 'Actualizar'}</span>
+              </button>
+            )}
           </div>
 
-          <div className="h-72 w-full">
-            {allContrataStats.byContrata.length === 0 ? (
-              <div
-                className="h-full flex items-center justify-center text-sm"
+          {/* Row 2: Contratistas Chips */}
+          {contrataOptions.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider mr-1"
                 style={{ color: 'var(--pluz-muted)' }}
               >
-                No hay registros de contratistas para comparar.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={allContrataStats.byContrata}
-                  margin={{ top: 4, right: 20, left: 0, bottom: 4 }}
+                <Building2 className="w-3.5 h-3.5" style={{ color: 'var(--pluz-primary)' }} />
+                Contratistas:
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedContratas([])}
+                className="px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer"
+                style={{
+                  backgroundColor:
+                    selectedContratas.length === 0 ? 'var(--pluz-primary)' : 'var(--pluz-bg)',
+                  color: selectedContratas.length === 0 ? '#FFFFFF' : 'var(--pluz-ink)',
+                  borderColor:
+                    selectedContratas.length === 0 ? 'var(--pluz-primary)' : 'var(--pluz-border)',
+                }}
+              >
+                Todas
+              </button>
+              {contrataOptions.map((c) => {
+                const active = selectedContratas.includes(c);
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => toggleContrata(c)}
+                    className="px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer"
+                    style={{
+                      backgroundColor: active ? 'var(--pluz-primary)' : 'var(--pluz-surface)',
+                      color: active ? '#FFFFFF' : 'var(--pluz-ink)',
+                      borderColor: active ? 'var(--pluz-primary)' : 'var(--pluz-border)',
+                    }}
+                  >
+                    {c}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Row 3: Especialidades de Campo Chips */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider mr-1"
+              style={{ color: 'var(--pluz-muted)' }}
+            >
+              <Filter className="w-3.5 h-3.5" style={{ color: 'var(--pluz-primary)' }} />
+              Especialidad:
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedCategories([])}
+              className="px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer"
+              style={{
+                backgroundColor:
+                  selectedCategories.length === 0 ? '#1E293B' : 'var(--pluz-bg)',
+                color: selectedCategories.length === 0 ? '#FFFFFF' : 'var(--pluz-ink)',
+                borderColor:
+                  selectedCategories.length === 0 ? '#1E293B' : 'var(--pluz-border)',
+              }}
+            >
+              Todas
+            </button>
+            {FIELD_CATEGORIES.map((cat) => {
+              const active = selectedCategories.includes(cat.id);
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => toggleCategory(cat.id)}
+                  className="px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer"
+                  style={{
+                    backgroundColor: active ? cat.color : 'var(--pluz-surface)',
+                    color: active ? '#FFFFFF' : 'var(--pluz-ink)',
+                    borderColor: active ? cat.color : 'var(--pluz-border)',
+                  }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
-                  <XAxis
-                    dataKey="contratista"
-                    tick={{ fontSize: 12, fill: '#0F172A', fontWeight: 600 }}
-                  />
-                  <YAxis
-                    allowDecimals={false}
-                    tick={{ fontSize: 11, fill: '#64748B' }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      borderRadius: '10px',
-                      borderColor: '#E2E8F0',
-                      fontSize: '12px',
-                    }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: '12px' }} />
-                  <Bar
-                    dataKey="campo"
-                    name="Campo"
-                    fill="#6CAB5E"
-                    radius={[6, 6, 0, 0]}
-                    barSize={32}
-                    cursor="pointer"
-                    onClick={(data) => {
-                      const c = (data as unknown as { contratista?: string })?.contratista;
-                      if (c) onDrillDownContrata?.(c);
-                    }}
-                  />
-                  <Bar
-                    dataKey="soporte"
-                    name="Soporte"
-                    fill="#3C5A9F"
-                    radius={[6, 6, 0, 0]}
-                    barSize={32}
-                    cursor="pointer"
-                    onClick={(data) => {
-                      const c = (data as unknown as { contratista?: string })?.contratista;
-                      if (c) onDrillDownContrata?.(c);
-                    }}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
+                  {cat.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* Alertas Panel */}
-      <div
-        className="rounded-xl border p-5 shadow-2xs"
-        style={{
-          backgroundColor: 'var(--pluz-surface)',
-          borderColor:
-            totalAlertCount > 0 ? 'rgba(230, 57, 70, 0.3)' : 'var(--pluz-border)',
-        }}
-      >
-        <div className="flex items-center gap-2 mb-3">
-          {totalAlertCount > 0 ? (
-            <AlertTriangle className="w-4 h-4" style={{ color: 'var(--pluz-danger)' }} />
-          ) : (
-            <CheckCircle2 className="w-4 h-4" style={{ color: 'var(--pluz-success)' }} />
-          )}
-          <h3 className="text-sm font-bold" style={{ color: 'var(--pluz-ink)' }}>
-            Panel de Alertas Operativas
-          </h3>
-        </div>
-
-        {totalAlertCount === 0 ? (
-          <p className="text-xs font-medium" style={{ color: 'var(--pluz-success)' }}>
-            Sin alertas activas: todos los horarios tienen cobertura y no hay filas incompletas.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Uncovered Horarios */}
+      {/* 5 KPI Cards (Solo Campo) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+        {FIELD_CATEGORIES.map((cat) => {
+          const Icon = CATEGORY_ICONS[cat.id];
+          const count = stats.countsByCategory[cat.id];
+          return (
             <div
-              className="rounded-lg border p-3.5"
+              key={cat.id}
+              className="rounded-xl border p-4 shadow-2xs"
               style={{
-                backgroundColor: 'var(--pluz-bg)',
+                backgroundColor: 'var(--pluz-surface)',
                 borderColor: 'var(--pluz-border)',
               }}
             >
-              <p
-                className="text-xs font-bold uppercase tracking-wider mb-2"
-                style={{ color: 'var(--pluz-muted)' }}
-              >
-                Horarios sin Cobertura ({stats.uncoveredHorarios.length})
-              </p>
-              {stats.uncoveredHorarios.length === 0 ? (
-                <p className="text-xs" style={{ color: 'var(--pluz-success)' }}>
-                  Todos los horarios del catálogo cuentan con personal.
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {stats.uncoveredHorarios.map((h) => (
-                    <span
-                      key={h}
-                      className="text-xs font-mono font-semibold px-2.5 py-1 rounded-md border"
-                      style={{
-                        backgroundColor: 'rgba(230, 57, 70, 0.08)',
-                        borderColor: 'rgba(230, 57, 70, 0.25)',
-                        color: 'var(--pluz-danger)',
-                      }}
-                    >
-                      {h}
-                    </span>
-                  ))}
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <span
+                  className="text-[11px] font-bold uppercase tracking-wider leading-tight"
+                  style={{ color: 'var(--pluz-muted)' }}
+                >
+                  {cat.label}
+                </span>
+                <div
+                  className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: `${cat.color}1F` }}
+                >
+                  <Icon className="w-4 h-4" style={{ color: cat.color }} />
                 </div>
-              )}
+              </div>
+              <p className="text-2xl font-bold tabular-nums" style={{ color: cat.color }}>
+                {count}
+              </p>
+              <p className="text-[11px] mt-1" style={{ color: 'var(--pluz-muted)' }}>
+                Cuadrillas de campo
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      {allowDateChange ? (
+        <>
+          {/* Main 3 Blocks Grid (Cuadros Rojos) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Bloque 1: Total Cuadrillas por Fecha (Izquierda, 7 cols) */}
+            <div
+              className="lg:col-span-7 rounded-xl border overflow-hidden shadow-2xs"
+              style={{
+                backgroundColor: 'var(--pluz-surface)',
+                borderColor: 'var(--pluz-border)',
+              }}
+            >
+              <div
+                className="px-4 py-3 flex flex-wrap items-center justify-between gap-2"
+                style={{ backgroundColor: '#3C5A9F' }}
+              >
+                <div>
+                  <h3 className="text-sm font-bold text-white">Total Cuadrillas por Fecha</h3>
+                  <p className="text-[11px] text-blue-100">
+                    Solo personal de campo • Línea punteada roja: Promedio diario ({stats.dailyAverage})
+                  </p>
+                </div>
+                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/15 text-white tabular-nums">
+                  Total: {stats.totalField}
+                </span>
+              </div>
+
+              <div className="p-4">
+                {stats.byDate.length === 0 ? (
+                  <div
+                    className="h-80 flex items-center justify-center text-sm"
+                    style={{ color: 'var(--pluz-muted)' }}
+                  >
+                    No hay cuadrillas de campo registradas en el rango seleccionado.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto pb-2">
+                    <div style={{ width: barChartMinWidth, height: '340px' }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={stats.byDate}
+                          margin={{ top: 24, right: 20, left: 0, bottom: 12 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                          <XAxis
+                            dataKey="label"
+                            tick={{ fontSize: 11, fill: '#0F172A', fontWeight: 600 }}
+                            interval={0}
+                          />
+                          <YAxis
+                            allowDecimals={false}
+                            tick={{ fontSize: 11, fill: '#64748B' }}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              borderRadius: '10px',
+                              borderColor: '#E2E8F0',
+                              fontSize: '12px',
+                            }}
+                            formatter={(value: number) => [`${value} cuadrillas`, 'Total Campo']}
+                            labelFormatter={(label) => `Fecha: ${label}`}
+                          />
+                          {stats.dailyAverage > 0 && (
+                            <ReferenceLine
+                              y={stats.dailyAverage}
+                              stroke="#E63946"
+                              strokeDasharray="5 5"
+                              strokeWidth={2}
+                              label={{
+                                value: `Prom: ${stats.dailyAverage}`,
+                                position: 'insideTopLeft',
+                                fill: '#E63946',
+                                fontSize: 11,
+                                fontWeight: 700,
+                              }}
+                            />
+                          )}
+                          <Bar
+                            dataKey="total"
+                            name="Total Cuadrillas"
+                            fill="#0088FF"
+                            radius={[4, 4, 0, 0]}
+                            maxBarSize={48}
+                          >
+                            <LabelList
+                              dataKey="total"
+                              position="top"
+                              style={{ fontSize: '11px', fontWeight: 700, fill: '#0F172A' }}
+                            />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Incomplete Rows */}
-            <div
-              className="rounded-lg border p-3.5"
-              style={{
-                backgroundColor: 'var(--pluz-bg)',
-                borderColor: 'var(--pluz-border)',
-              }}
-            >
-              <p
-                className="text-xs font-bold uppercase tracking-wider mb-2"
-                style={{ color: 'var(--pluz-muted)' }}
-              >
-                Filas Incompletas ({incompleteCount})
-              </p>
-              <ul className="space-y-1.5 text-xs" style={{ color: 'var(--pluz-ink)' }}>
-                <li className="flex items-center justify-between">
-                  <span>Sin horario asignado</span>
-                  <span
-                    className="font-bold tabular-nums px-2 py-0.5 rounded"
-                    style={{
-                      backgroundColor:
-                        stats.missingHorarioCount > 0
-                          ? 'rgba(230, 57, 70, 0.1)'
-                          : 'rgba(108, 171, 94, 0.12)',
-                      color:
-                        stats.missingHorarioCount > 0
-                          ? 'var(--pluz-danger)'
-                          : 'var(--pluz-success)',
-                    }}
-                  >
-                    {stats.missingHorarioCount}
-                  </span>
-                </li>
-                <li className="flex items-center justify-between">
-                  <span>Frentes de campo sin usuario SSAM</span>
-                  <span
-                    className="font-bold tabular-nums px-2 py-0.5 rounded"
-                    style={{
-                      backgroundColor:
-                        stats.missingSsamCount > 0
-                          ? 'rgba(230, 57, 70, 0.1)'
-                          : 'rgba(108, 171, 94, 0.12)',
-                      color:
-                        stats.missingSsamCount > 0
-                          ? 'var(--pluz-danger)'
-                          : 'var(--pluz-success)',
-                    }}
-                  >
-                    {stats.missingSsamCount}
-                  </span>
-                </li>
-              </ul>
+            {/* Derecha (5 cols): Matriz + Donut */}
+            <div className="lg:col-span-5 flex flex-col gap-6">
+              {matrixCard}
+              {companyShareCard}
             </div>
           </div>
-        )}
-      </div>
+
+          {/* Secondary Analytics Row: Especialidad x Empresa + Promedio por Día de la Semana */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="lg:col-span-7">{specialtyByCompanyCard}</div>
+
+            {/* Bloque 5: Capacidad Promedio por Día de la Semana (Lun - Dom) */}
+            <div
+              className="lg:col-span-5 rounded-xl border overflow-hidden shadow-2xs"
+              style={{
+                backgroundColor: 'var(--pluz-surface)',
+                borderColor: 'var(--pluz-border)',
+              }}
+            >
+              <div className="px-4 py-3" style={{ backgroundColor: '#3C5A9F' }}>
+                <h3 className="text-sm font-bold text-white">
+                  Capacidad Promedio por Día de la Semana
+                </h3>
+                <p className="text-[11px] text-blue-100">
+                  Azul: Lunes–Viernes • Ámbar: Sábado y Domingo
+                </p>
+              </div>
+
+              <div className="p-4">
+                {stats.totalField === 0 ? (
+                  <div
+                    className="h-72 flex items-center justify-center text-sm"
+                    style={{ color: 'var(--pluz-muted)' }}
+                  >
+                    Sin datos para calcular promedios semanales.
+                  </div>
+                ) : (
+                  <div className="h-80 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={stats.byWeekday}
+                        margin={{ top: 24, right: 12, left: 0, bottom: 8 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" vertical={false} />
+                        <XAxis
+                          dataKey="label"
+                          tick={{ fontSize: 11, fill: '#0F172A', fontWeight: 600 }}
+                        />
+                        <YAxis
+                          allowDecimals={false}
+                          tick={{ fontSize: 11, fill: '#64748B' }}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            borderRadius: '10px',
+                            borderColor: '#E2E8F0',
+                            fontSize: '12px',
+                          }}
+                          formatter={(value: number, _name, item) => {
+                            const days = (item?.payload as { daysCount?: number })?.daysCount ?? 0;
+                            return [`${value} cuadrillas/día (${days} día${days === 1 ? '' : 's'})`, 'Promedio'];
+                          }}
+                        />
+                        <Bar
+                          dataKey="average"
+                          name="Promedio Diario"
+                          radius={[4, 4, 0, 0]}
+                          maxBarSize={36}
+                        >
+                          {stats.byWeekday.map((entry) => (
+                            <Cell
+                              key={entry.label}
+                              fill={entry.weekdayIndex >= 5 ? '#F59E0B' : '#0088FF'}
+                            />
+                          ))}
+                          <LabelList
+                            dataKey="average"
+                            position="top"
+                            style={{ fontSize: '11px', fontWeight: 700, fill: '#0F172A' }}
+                            formatter={(v: number) => (v > 0 ? v : '')}
+                          />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        /* Vista Compacta Solo Hoy (sin gráficos históricos ni espacios vacíos) */
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+            <div className="lg:col-span-7">{matrixCard}</div>
+            <div className="lg:col-span-5">{companyShareCard}</div>
+          </div>
+          {specialtyByCompanyCard}
+        </>
+      )}
     </div>
   );
 }

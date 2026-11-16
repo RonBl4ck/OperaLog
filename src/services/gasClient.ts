@@ -57,6 +57,7 @@ const DEFAULT_CATALOGS: CatalogItem[] = [
   // SKILL (RECLAMOS)
   { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'TOMA', orden: 1, activo: true },
   { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'TOMA + CNX AEREA', orden: 2, activo: true },
+  { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'APOYO RECLAMOS', orden: 3, activo: true },
 
   // SKILL (TEKO)
   { tipo: 'SKILL', frente: 'TEKO', valor: 'CNX AEREA + RED AEREA', orden: 1, activo: true },
@@ -64,6 +65,7 @@ const DEFAULT_CATALOGS: CatalogItem[] = [
   // SKILL (REPARACIONES)
   { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'CNX SUBTERRANEA', orden: 1, activo: true },
   { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'RED + CNX SUBTERRANEA', orden: 2, activo: true },
+  { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'APOYO REPARACIONES', orden: 3, activo: true },
 ];
 
 export function getTodayIsoDate(): string {
@@ -408,7 +410,7 @@ export async function login(usuario: string, pin: string): Promise<UserSession> 
   return res as UserSession;
 }
 
-export async function getCatalogs(): Promise<CatalogItem[]> {
+export async function getCatalogs(includeInactive = false): Promise<CatalogItem[]> {
   if (isDemoMode()) {
     return readLocalCatalogs();
   }
@@ -422,7 +424,23 @@ export async function getCatalogs(): Promise<CatalogItem[]> {
     // Ignore sessionStorage read error
   }
 
-  const res = await gasGet<CatalogItem[] | { catalogs?: CatalogItem[] }>('getCatalogs');
+  const action = includeInactive ? 'getAllCatalogs' : 'getCatalogs';
+  const res = await gasGet<CatalogItem[] | { catalogs?: CatalogItem[] }>(action);
+  const catalogs = Array.isArray(res) ? res : (res.catalogs ?? []);
+  try {
+    sessionStorage.setItem(STORAGE_KEYS.SESSION_CATALOGS, JSON.stringify(catalogs));
+  } catch {
+    // Ignore sessionStorage write error
+  }
+  return catalogs;
+}
+
+export async function refreshAllCatalogs(): Promise<CatalogItem[]> {
+  if (isDemoMode()) {
+    return readLocalCatalogs();
+  }
+
+  const res = await gasGet<CatalogItem[] | { catalogs?: CatalogItem[] }>('getAllCatalogs');
   const catalogs = Array.isArray(res) ? res : (res.catalogs ?? []);
   try {
     sessionStorage.setItem(STORAGE_KEYS.SESSION_CATALOGS, JSON.stringify(catalogs));
@@ -471,6 +489,32 @@ export async function getTurn(
   }
 
   const res = await gasGet<TurnRow[] | { rows?: TurnRow[] }>('getTurn', { fecha, contratista, rol });
+  return Array.isArray(res) ? res : (res.rows ?? []);
+}
+
+export async function getTurnsRange(
+  fechaInicio: string,
+  fechaFin: string,
+  contratista: string,
+  rol: string,
+): Promise<TurnRow[]> {
+  if (isDemoMode()) {
+    const all = readLocalTurns();
+    return all.filter((row) => {
+      if (!row.fecha) return false;
+      if (fechaInicio && row.fecha < fechaInicio) return false;
+      if (fechaFin && row.fecha > fechaFin) return false;
+      if (rol === 'ADMIN' && (contratista === 'ALL' || !contratista)) return true;
+      return row.contratista === contratista;
+    });
+  }
+
+  const res = await gasGet<TurnRow[] | { rows?: TurnRow[] }>('getTurnsRange', {
+    fechaInicio,
+    fechaFin,
+    contratista,
+    rol,
+  });
   return Array.isArray(res) ? res : (res.rows ?? []);
 }
 
@@ -538,12 +582,16 @@ export async function saveTurn(
 
 export interface SaveCatalogPayload {
   items: CatalogItem[];
+  rol?: 'ADMIN' | 'CONTRATA';
+  usuario?: string;
 }
 
 export async function saveCatalog(
   payload: SaveCatalogPayload | CatalogItem[],
 ): Promise<{ ok: boolean; items: CatalogItem[] }> {
   const items = Array.isArray(payload) ? payload : payload.items;
+  const rol = Array.isArray(payload) ? 'ADMIN' : (payload.rol ?? 'ADMIN');
+  const usuario = Array.isArray(payload) ? '' : (payload.usuario ?? '');
 
   if (isDemoMode()) {
     writeLocalCatalogs(items);
@@ -552,6 +600,8 @@ export async function saveCatalog(
 
   const result = await gasPost<{ ok: boolean; items?: CatalogItem[] }>('saveCatalog', {
     items,
+    rol,
+    usuario,
   });
   const updated = result.items ?? items;
   try {

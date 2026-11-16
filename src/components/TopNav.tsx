@@ -1,3 +1,4 @@
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Zap,
   ClipboardList,
@@ -5,6 +6,8 @@ import {
   Settings2,
   LogOut,
   FlaskConical,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import { isDemoMode } from '../services/gasClient';
 import type { UserSession } from '../types/operalog';
@@ -16,6 +19,9 @@ export interface TopNavProps {
   activeTab: AppTab;
   onTabChange: (tab: AppTab) => void;
   onLogout: () => void;
+  isHistoryUnlocked?: boolean;
+  onUnlockHistory?: (password: string) => boolean;
+  onLockHistory?: () => void;
 }
 
 interface TabDef {
@@ -31,16 +37,114 @@ const TABS: TabDef[] = [
   { id: 'catalogos', label: 'Catálogos (Admin)', icon: Settings2, adminOnly: true },
 ];
 
-export function TopNav({ user, activeTab, onTabChange, onLogout }: TopNavProps) {
+export function TopNav({
+  user,
+  activeTab,
+  onTabChange,
+  onLogout,
+  isHistoryUnlocked = false,
+  onUnlockHistory,
+  onLockHistory,
+}: TopNavProps) {
   const demoMode = isDemoMode();
   const isAdmin = user.rol === 'ADMIN';
+
+  const [unlockMenuOpen, setUnlockMenuOpen] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [unlockError, setUnlockError] = useState(false);
+
+  const logoContainerRef = useRef<HTMLDivElement | null>(null);
+  const passwordInputRef = useRef<HTMLInputElement | null>(null);
+  const lastClickTimeRef = useRef<number>(0);
+  const lastToggleTimeRef = useRef<number>(0);
+
   const visibleTabs: TabDef[] = isAdmin
     ? [
         { id: 'graficos', label: 'Gráficos y Estado', icon: BarChart3 },
         { id: 'registro', label: 'Consulta de Turnos', icon: ClipboardList },
-        { id: 'catalogos', label: 'Catálogos (Admin)', icon: Settings2, adminOnly: true },
+        ...(isHistoryUnlocked
+          ? [{ id: 'catalogos' as const, label: 'Catálogos (Admin)', icon: Settings2, adminOnly: true }]
+          : []),
       ]
     : TABS.filter((tab) => !tab.adminOnly);
+
+  useEffect(() => {
+    if (!unlockMenuOpen) return;
+    const focusTimer = setTimeout(() => {
+      passwordInputRef.current?.focus();
+    }, 30);
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (
+        logoContainerRef.current &&
+        !logoContainerRef.current.contains(event.target as Node)
+      ) {
+        setUnlockMenuOpen(false);
+        setUnlockError(false);
+        setPasswordInput('');
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setUnlockMenuOpen(false);
+        setUnlockError(false);
+        setPasswordInput('');
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      clearTimeout(focusTimer);
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [unlockMenuOpen]);
+
+  const openUnlockPopover = () => {
+    if (!isAdmin) return;
+    lastToggleTimeRef.current = Date.now();
+    setUnlockError(false);
+    setPasswordInput('');
+    setUnlockMenuOpen((prev) => !prev);
+  };
+
+  const handleLogoClick = () => {
+    if (!isAdmin) return;
+    const now = Date.now();
+    if (now - lastClickTimeRef.current < 360) {
+      lastClickTimeRef.current = 0;
+      openUnlockPopover();
+    } else {
+      lastClickTimeRef.current = now;
+    }
+  };
+
+  const handleLogoDoubleClick = () => {
+    if (!isAdmin) return;
+    if (Date.now() - lastToggleTimeRef.current < 200) return;
+    openUnlockPopover();
+  };
+
+  const handleUnlockSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onUnlockHistory) return;
+    const trimmed = passwordInput.trim();
+    if (!trimmed) {
+      setUnlockError(true);
+      return;
+    }
+    const ok = onUnlockHistory(trimmed);
+    if (ok) {
+      setUnlockMenuOpen(false);
+      setPasswordInput('');
+      setUnlockError(false);
+    } else {
+      setUnlockError(true);
+      setPasswordInput('');
+    }
+  };
 
   return (
     <header
@@ -53,32 +157,75 @@ export function TopNav({ user, activeTab, onTabChange, onLogout }: TopNavProps) 
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         {/* Top Row: Brand + User & Actions */}
         <div className="h-14 flex items-center justify-between gap-3">
-          {/* PLUZ Logo Mark */}
-          <div className="flex items-center gap-2.5 min-w-0">
+          {/* PLUZ Logo Mark + Secret Master Popover */}
+          <div ref={logoContainerRef} className="relative flex items-center gap-2.5 min-w-0">
             <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-xs"
-              style={{ backgroundColor: 'var(--pluz-primary)' }}
+              role={isAdmin ? 'button' : undefined}
+              tabIndex={isAdmin ? 0 : undefined}
+              aria-label="Logo OperaLog"
+              onClick={handleLogoClick}
+              onDoubleClick={handleLogoDoubleClick}
+              onKeyDown={(e) => {
+                if (isAdmin && (e.key === 'Enter' || e.key === ' ')) {
+                  e.preventDefault();
+                  openUnlockPopover();
+                }
+              }}
+              className={`flex items-center gap-2.5 select-none ${
+                isAdmin ? 'cursor-pointer' : ''
+              }`}
             >
-              <Zap
-                className="w-4 h-4"
-                style={{ color: 'var(--pluz-accent)' }}
-                fill="currentColor"
-              />
-            </div>
-            <div className="flex items-baseline gap-2 min-w-0">
-              <span
-                className="text-base font-bold tracking-tight truncate"
-                style={{ color: 'var(--pluz-ink)' }}
+              <div
+                className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-xs transition-transform active:scale-95"
+                style={{
+                  backgroundColor: 'var(--pluz-primary)',
+                  boxShadow:
+                    isAdmin && isHistoryUnlocked
+                      ? '0 0 0 2px rgba(251, 193, 64, 0.75)'
+                      : undefined,
+                }}
               >
-                OperaLog
-              </span>
-              <span
-                className="hidden sm:inline text-[11px] font-semibold uppercase tracking-wider"
-                style={{ color: 'var(--pluz-primary)' }}
-              >
-                PLUZ
-              </span>
+                <Zap
+                  className="w-4 h-4"
+                  style={{ color: 'var(--pluz-accent)' }}
+                  fill="currentColor"
+                />
+              </div>
+              <div className="flex items-baseline gap-2 min-w-0">
+                <span
+                  className="text-base font-bold tracking-tight truncate"
+                  style={{ color: 'var(--pluz-ink)' }}
+                >
+                  OperaLog
+                </span>
+                <span
+                  className="hidden sm:inline text-[11px] font-semibold uppercase tracking-wider"
+                  style={{ color: 'var(--pluz-primary)' }}
+                >
+                  PLUZ
+                </span>
+              </div>
             </div>
+
+            {isAdmin && isHistoryUnlocked && (
+              <button
+                type="button"
+                onClick={() => {
+                  setUnlockMenuOpen(false);
+                  onLockHistory?.();
+                }}
+                className="tactile-btn inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border shrink-0 cursor-pointer"
+                style={{
+                  backgroundColor: 'rgba(60, 90, 159, 0.1)',
+                  borderColor: 'rgba(60, 90, 159, 0.35)',
+                  color: 'var(--pluz-primary)',
+                }}
+                title="Clic para volver a bloquear al día de hoy"
+              >
+                <Unlock className="w-3 h-3" />
+                <span className="hidden xs:inline">Histórico activo · Bloquear</span>
+              </button>
+            )}
 
             {demoMode && (
               <span
@@ -92,6 +239,53 @@ export function TopNav({ user, activeTab, onTabChange, onLogout }: TopNavProps) 
                 <FlaskConical className="w-3 h-3" />
                 <span className="hidden xs:inline">Demo Mode</span>
               </span>
+            )}
+
+            {/* Desplegable discreto al dar doble clic en el ícono */}
+            {isAdmin && unlockMenuOpen && (
+              <div
+                role="dialog"
+                aria-label="Desbloqueo"
+                className="absolute left-0 top-full mt-2 z-50 w-48 rounded-xl border bg-white p-2 shadow-xl"
+                style={{ borderColor: 'var(--pluz-border)' }}
+              >
+                {!isHistoryUnlocked ? (
+                  <form onSubmit={handleUnlockSubmit}>
+                    <input
+                      ref={passwordInputRef}
+                      type="password"
+                      value={passwordInput}
+                      onChange={(e) => {
+                        setPasswordInput(e.target.value);
+                        if (unlockError) setUnlockError(false);
+                      }}
+                      aria-label="Clave"
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg border outline-none focus:ring-2"
+                      style={{
+                        borderColor: unlockError ? 'var(--pluz-danger)' : 'var(--pluz-border)',
+                        color: 'var(--pluz-ink)',
+                        backgroundColor: 'var(--pluz-surface)',
+                      }}
+                    />
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUnlockMenuOpen(false);
+                      onLockHistory?.();
+                    }}
+                    className="tactile-btn w-full py-1.5 px-3 rounded-lg text-xs font-semibold border flex items-center justify-center gap-1.5 hover:bg-slate-50 cursor-pointer"
+                    style={{
+                      borderColor: 'var(--pluz-border)',
+                      color: 'var(--pluz-ink)',
+                    }}
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Restringir solo a hoy</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
