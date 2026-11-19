@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -34,7 +34,13 @@ import {
   type FieldCategoryId,
 } from '../utils/capacityStats';
 import { copyMatrixAsImage, copyMatrixForExcel } from '../utils/matrixExport';
-import type { CatalogItem, TurnRow, UserSession } from '../types/operalog';
+import type {
+  CatalogItem,
+  OperalogGroup,
+  TurnRow,
+  UserGroupScope,
+  UserSession,
+} from '../types/operalog';
 
 export interface ChartsTabProps {
   rows: TurnRow[];
@@ -52,6 +58,8 @@ export interface ChartsTabProps {
   loading?: boolean;
   onDrillDownContrata?: (contratista: string) => void;
   allowDateChange?: boolean;
+  contrataGroupMap?: Map<string, OperalogGroup>;
+  activeGroup?: UserGroupScope;
 }
 
 const COMPANY_COLORS = [
@@ -83,8 +91,13 @@ export default function ChartsTab({
   onRefresh,
   loading = false,
   allowDateChange = true,
+  activeGroup = 'ALL',
 }: ChartsTabProps) {
   const [selectedContratas, setSelectedContratas] = useState<string[]>([]);
+
+  useEffect(() => {
+    setSelectedContratas([]);
+  }, [activeGroup]);
   const [selectedCategories, setSelectedCategories] = useState<FieldCategoryId[]>([]);
   const [matrixCopyFeedback, setMatrixCopyFeedback] = useState<
     'image-copied' | 'image-downloaded' | 'excel-copied' | 'error' | null
@@ -590,7 +603,7 @@ export default function ChartsTab({
                   style={{ color: 'var(--pluz-muted)' }}
                 >
                   <Building2 className="w-3.5 h-3.5" style={{ color: 'var(--pluz-primary)' }} />
-                  Contratistas:
+                  Contratistas{activeGroup !== 'ALL' ? ` (${activeGroup})` : ''}:
                 </span>
                 <button
                   type="button"

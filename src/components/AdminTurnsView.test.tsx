@@ -1,7 +1,12 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AdminTurnsView } from './AdminTurnsView';
-import type { TurnRow } from '../types/operalog';
+import type { OperalogGroup, TurnRow } from '../types/operalog';
+
+const downloadAdminTurnsExcelMock = vi.fn().mockResolvedValue(undefined);
+vi.mock('../utils/excelTemplate', () => ({
+  downloadAdminTurnsExcel: (...args: unknown[]) => downloadAdminTurnsExcelMock(...args),
+}));
 
 const sampleRows: TurnRow[] = [
   {
@@ -100,7 +105,7 @@ describe('AdminTurnsView multi-select filters and table sorting', () => {
     const getBodyNames = () => {
       const tbody = screen.getByRole('table').querySelector('tbody')!;
       return Array.from(tbody.querySelectorAll('tr')).map(
-        (tr) => tr.querySelectorAll('td')[2].textContent,
+        (tr) => tr.querySelectorAll('td')[3].textContent,
       );
     };
 
@@ -123,5 +128,47 @@ describe('AdminTurnsView multi-select filters and table sorting', () => {
     fireEvent.click(nombresBtn);
     expect(getBodyNames()).toEqual(['Carlos Zapata', 'Ana Alvarez', 'Bruno Mendez']);
     expect(nombresBtn.closest('th')?.getAttribute('aria-sort')).toBe('none');
+  });
+
+  it('displays Grupo column and exports native Excel .xlsx via downloadAdminTurnsExcel', async () => {
+    downloadAdminTurnsExcelMock.mockClear();
+    const contrataGroupMap = new Map<string, OperalogGroup>([
+      ['ALFA', 'BT'],
+      ['BETA', 'AP'],
+      ['GAMMA', 'MT'],
+    ]);
+
+    render(
+      <AdminTurnsView
+        fecha="2026-11-13"
+        onFechaChange={vi.fn()}
+        contratas={['ALFA', 'BETA', 'GAMMA']}
+        rows={sampleRows}
+        loading={false}
+        onRefresh={vi.fn()}
+        selectedContrata="ALL"
+        onSelectedContrataChange={vi.fn()}
+        onToast={vi.fn()}
+        contrataGroupMap={contrataGroupMap}
+        activeGroup="AP"
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Grupo' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Exportar CSV/i })).toBeNull();
+
+    const exportBtn = screen.getByRole('button', { name: /Exportar Excel/i });
+    fireEvent.click(exportBtn);
+
+    await vi.waitFor(() => {
+      expect(downloadAdminTurnsExcelMock).toHaveBeenCalledTimes(1);
+    });
+
+    const [exportedRows, filename, frontLabelMap, passedMap] =
+      downloadAdminTurnsExcelMock.mock.calls[0];
+    expect(exportedRows).toHaveLength(3);
+    expect(filename).toBe('OperaLog_2026-11-13_AP_ALL.xlsx');
+    expect(frontLabelMap).toBeInstanceOf(Map);
+    expect(passedMap).toBe(contrataGroupMap);
   });
 });

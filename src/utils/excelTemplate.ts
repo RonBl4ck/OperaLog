@@ -1,11 +1,14 @@
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import {
-  FRONT_CONFIGS,
+  getActiveFrontConfigs,
+  matchesGroupCatalog,
   type CatalogItem,
   type FrontConfig,
   type FrontType,
+  type OperalogGroup,
   type TurnRow,
+  type UserGroupScope,
 } from '../types/operalog';
 import { generateRowId } from './pasteParser';
 
@@ -62,13 +65,15 @@ function getActiveCatalogValues(
   catalogs: CatalogItem[],
   tipo: CatalogItem['tipo'],
   frontId: FrontConfig['id'],
+  grupo?: UserGroupScope,
 ): string[] {
   return catalogs
     .filter(
       (c) =>
         c.activo &&
         c.tipo === tipo &&
-        (c.frente === 'ALL' || c.frente === frontId),
+        (c.frente === 'ALL' || c.frente === frontId) &&
+        matchesGroupCatalog(c.grupo, grupo),
     )
     .sort((a, b) => a.orden - b.orden)
     .map((c) => c.valor);
@@ -170,6 +175,7 @@ function appendFrontSheet(
   pendingCols: PendingCatalogColumn[],
   front: FrontConfig,
   catalogs: CatalogItem[],
+  grupo?: UserGroupScope,
 ): void {
   const safeSheetName =
     front.label.replace(/[:\\/?*[\]]/g, '').slice(0, 31) || 'Plantilla';
@@ -205,7 +211,7 @@ function appendFrontSheet(
   const validationRefs = new Map<TemplateFieldKey, CatalogRangeRef>();
 
   if (front.hasActivityDropdown) {
-    const actValues = getActiveCatalogValues(catalogs, 'ACTIVIDAD', front.id);
+    const actValues = getActiveCatalogValues(catalogs, 'ACTIVIDAD', front.id, grupo);
     const ref = registerCatalogColumn(
       pendingCols,
       `${front.label} - Actividad`,
@@ -215,7 +221,7 @@ function appendFrontSheet(
   }
 
   if (front.hasSkill) {
-    const skillValues = getActiveCatalogValues(catalogs, 'SKILL', front.id);
+    const skillValues = getActiveCatalogValues(catalogs, 'SKILL', front.id, grupo);
     const ref = registerCatalogColumn(
       pendingCols,
       `${front.label} - Skill`,
@@ -224,7 +230,7 @@ function appendFrontSheet(
     if (ref) validationRefs.set('skill', ref);
   }
 
-  const horarioValues = getActiveCatalogValues(catalogs, 'HORARIO', front.id);
+  const horarioValues = getActiveCatalogValues(catalogs, 'HORARIO', front.id, grupo);
   const horarioRef = registerCatalogColumn(
     pendingCols,
     `${front.label} - Horario`,
@@ -259,11 +265,12 @@ function appendFrontSheet(
 export function buildExcelTemplateWorkbook(
   front: FrontConfig,
   catalogs: CatalogItem[],
+  grupo?: UserGroupScope,
 ): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
   const pendingCols: PendingCatalogColumn[] = [];
 
-  appendFrontSheet(wb, pendingCols, front, catalogs);
+  appendFrontSheet(wb, pendingCols, front, catalogs, grupo);
   writeCatalogSheet(wb, pendingCols);
   return wb;
 }
@@ -271,13 +278,16 @@ export function buildExcelTemplateWorkbook(
 /** Builds a general multi-sheet ExcelJS workbook for all template-enabled fronts. */
 export function buildGeneralExcelTemplateWorkbook(
   catalogs: CatalogItem[],
+  grupo?: UserGroupScope,
 ): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
   const pendingCols: PendingCatalogColumn[] = [];
 
-  const templateFronts = FRONT_CONFIGS.filter((f) => f.supportsExcelTemplate);
+  const templateFronts = getActiveFrontConfigs(catalogs, grupo).filter(
+    (f) => f.supportsExcelTemplate,
+  );
   for (const front of templateFronts) {
-    appendFrontSheet(wb, pendingCols, front, catalogs);
+    appendFrontSheet(wb, pendingCols, front, catalogs, grupo);
   }
 
   writeCatalogSheet(wb, pendingCols);
@@ -306,8 +316,9 @@ async function triggerWorkbookDownload(
 export async function downloadExcelTemplate(
   front: FrontConfig,
   catalogs: CatalogItem[],
+  grupo?: UserGroupScope,
 ): Promise<void> {
-  const wb = buildExcelTemplateWorkbook(front, catalogs);
+  const wb = buildExcelTemplateWorkbook(front, catalogs, grupo);
   const slug = front.id.toLowerCase().replace(/\s+/g, '_');
   await triggerWorkbookDownload(wb, `Plantilla_${slug}.xlsx`);
 }
@@ -315,8 +326,9 @@ export async function downloadExcelTemplate(
 /** Downloads the general 4-sheet Excel template with dropdowns for all operational fronts. */
 export async function downloadGeneralExcelTemplate(
   catalogs: CatalogItem[],
+  grupo?: UserGroupScope,
 ): Promise<void> {
-  const wb = buildGeneralExcelTemplateWorkbook(catalogs);
+  const wb = buildGeneralExcelTemplateWorkbook(catalogs, grupo);
   await triggerWorkbookDownload(wb, 'Plantilla_OperaLog.xlsx');
 }
 
@@ -325,6 +337,7 @@ function parseSheetRows(
   front: FrontConfig,
   meta: { fecha: string; contratista: string },
   catalogs: CatalogItem[],
+  grupo?: UserGroupScope,
 ): TurnRow[] {
   const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
@@ -344,12 +357,12 @@ function parseSheetRows(
     : columns.map((c) => c.key);
   const dataRows = hasHeaderRow ? rawRows.slice(1) : rawRows;
 
-  const horarioOptions = getActiveCatalogValues(catalogs, 'HORARIO', front.id);
+  const horarioOptions = getActiveCatalogValues(catalogs, 'HORARIO', front.id, grupo);
   const activityOptions = front.hasActivityDropdown
-    ? getActiveCatalogValues(catalogs, 'ACTIVIDAD', front.id)
+    ? getActiveCatalogValues(catalogs, 'ACTIVIDAD', front.id, grupo)
     : [];
   const skillOptions = front.hasSkill
-    ? getActiveCatalogValues(catalogs, 'SKILL', front.id)
+    ? getActiveCatalogValues(catalogs, 'SKILL', front.id, grupo)
     : [];
 
   const parsed: TurnRow[] = [];
@@ -404,6 +417,7 @@ export function parseExcelWorkbook(
   front: FrontConfig,
   meta: { fecha: string; contratista: string },
   catalogs: CatalogItem[],
+  grupo?: UserGroupScope,
 ): TurnRow[] {
   const wb = XLSX.read(data, { type: 'array' });
   const targetToken = normalizeToken(front.label);
@@ -412,7 +426,7 @@ export function parseExcelWorkbook(
     wb.SheetNames[0];
   if (!matchedSheetName) return [];
 
-  return parseSheetRows(wb.Sheets[matchedSheetName], front, meta, catalogs);
+  return parseSheetRows(wb.Sheets[matchedSheetName], front, meta, catalogs, grupo);
 }
 
 /**
@@ -424,10 +438,13 @@ export function parseGeneralExcelWorkbook(
   data: ArrayBuffer,
   meta: { fecha: string; contratista: string },
   catalogs: CatalogItem[],
+  grupo?: UserGroupScope,
 ): Partial<Record<FrontType, TurnRow[]>> {
   const wb = XLSX.read(data, { type: 'array' });
   const result: Partial<Record<FrontType, TurnRow[]>> = {};
-  const templateFronts = FRONT_CONFIGS.filter((f) => f.supportsExcelTemplate);
+  const templateFronts = getActiveFrontConfigs(catalogs, grupo).filter(
+    (f) => f.supportsExcelTemplate,
+  );
 
   for (const front of templateFronts) {
     const targetTokens = new Set([
@@ -444,6 +461,7 @@ export function parseGeneralExcelWorkbook(
       front,
       meta,
       catalogs,
+      grupo,
     );
     if (parsedRows.length > 0) {
       result[front.id] = parsedRows;
@@ -451,4 +469,101 @@ export function parseGeneralExcelWorkbook(
   }
 
   return result;
+}
+
+/** Builds a styled ExcelJS workbook for exporting Admin turn records. */
+export function buildAdminTurnsExcelWorkbook(
+  rows: TurnRow[],
+  frontLabelMap: Map<FrontType, string>,
+  contrataGroupMap?: Map<string, OperalogGroup>,
+): ExcelJS.Workbook {
+  const wb = new ExcelJS.Workbook();
+  const sheet = wb.addWorksheet('Turnos', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+
+  const headers = [
+    'Fecha',
+    'Grupo',
+    'Contratista',
+    'Frente',
+    'Nombres',
+    'Usuario SSAM',
+    'Celular',
+    'Actividad',
+    'Skill',
+    'Horario',
+  ];
+
+  const minWidths = [12, 9, 15, 18, 28, 16, 14, 20, 24, 18];
+  const maxLengths = headers.map((h, i) => Math.max(h.length + 2, minWidths[i]));
+
+  const dataRows = rows.map((row) => {
+    const resolvedGroup = row.grupo || contrataGroupMap?.get(row.contratista) || 'BT';
+    const values = [
+      row.fecha || '',
+      resolvedGroup,
+      row.contratista || '',
+      frontLabelMap.get(row.frente) ?? row.frente ?? '',
+      row.nombres || '',
+      row.usuario_ssam || '',
+      row.celular || '',
+      row.actividad || '',
+      row.skill || '',
+      row.horario || '',
+    ];
+    values.forEach((val, idx) => {
+      maxLengths[idx] = Math.min(42, Math.max(maxLengths[idx], val.length + 3));
+    });
+    return values;
+  });
+
+  sheet.columns = headers.map((header, idx) => ({
+    header,
+    width: maxLengths[idx],
+  }));
+
+  const thinBorder: Partial<ExcelJS.Borders> = {
+    top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+  };
+
+  const headerRow = sheet.getRow(1);
+  headerRow.height = 24;
+  headerRow.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF3C5A9F' },
+    };
+    cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    cell.border = thinBorder;
+  });
+
+  dataRows.forEach((values) => {
+    const added = sheet.addRow(values);
+    added.eachCell({ includeEmpty: true }, (cell) => {
+      cell.border = thinBorder;
+      cell.alignment = { vertical: 'middle', horizontal: 'left' };
+    });
+  });
+
+  sheet.getColumn(1).numFmt = '@';
+  sheet.getColumn(7).numFmt = '@';
+
+  return wb;
+}
+
+/** Downloads the Admin turns Excel report. */
+export async function downloadAdminTurnsExcel(
+  rows: TurnRow[],
+  filename: string,
+  frontLabelMap: Map<FrontType, string>,
+  contrataGroupMap?: Map<string, OperalogGroup>,
+): Promise<void> {
+  const wb = buildAdminTurnsExcelWorkbook(rows, frontLabelMap, contrataGroupMap);
+  await triggerWorkbookDownload(wb, filename);
 }

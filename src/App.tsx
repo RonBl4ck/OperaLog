@@ -6,14 +6,34 @@ import { OperationsTab, clearOperationsCache } from './components/OperationsTab'
 import { AdminTurnsView } from './components/AdminTurnsView';
 import { AdminCatalogsTab } from './components/AdminCatalogsTab';
 import { ToastContainer } from './components/ui/ToastContainer';
-import { getCatalogs, getContratas, getTodayIsoDate, getTurn, getTurnsRange } from './services/gasClient';
-import type { CatalogItem, ToastMessage, TurnRow, UserSession } from './types/operalog';
+import {
+  getCatalogs,
+  getContratas,
+  getContratasMeta,
+  getTodayIsoDate,
+  getTurn,
+  getTurnsRange,
+} from './services/gasClient';
+import {
+  normalizeGroup,
+  type CatalogItem,
+  type ContrataMeta,
+  type OperalogGroup,
+  type ToastMessage,
+  type TurnRow,
+  type UserGroupScope,
+  type UserSession,
+} from './types/operalog';
 
 const ChartsTab = lazy(() => import('./components/ChartsTab'));
 
 const SESSION_KEY = 'operalog_user_session_v1';
 export const MASTER_HISTORY_PASSWORD =
   ((import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_MASTER_PASSWORD ?? '').trim();
+
+export function shouldUnlockHistoryByDefault(session: UserSession | null): boolean {
+  return Boolean(session && session.rol === 'ADMIN' && session.ver_historico === true);
+}
 
 export default function App() {
   const [user, setUser] = useState<UserSession | null>(() => {
@@ -24,7 +44,9 @@ export default function App() {
       return null;
     }
   });
-  const [isHistoryUnlocked, setIsHistoryUnlocked] = useState<boolean>(false);
+  const [isHistoryUnlocked, setIsHistoryUnlocked] = useState<boolean>(() =>
+    shouldUnlockHistoryByDefault(user),
+  );
 
   const [activeTab, setActiveTab] = useState<AppTab>(() => {
     try {
@@ -40,6 +62,19 @@ export default function App() {
   });
   const [catalogs, setCatalogs] = useState<CatalogItem[]>([]);
   const [contratas, setContratas] = useState<string[]>(['ALFA', 'BETA']);
+  const [contratasMeta, setContratasMeta] = useState<ContrataMeta[]>([]);
+  const [adminGroupFilter, setAdminGroupFilter] = useState<UserGroupScope>(() => {
+    try {
+      const raw = sessionStorage.getItem(SESSION_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as UserSession;
+        return normalizeGroup(parsed.grupo, 'ALL');
+      }
+    } catch {
+      // Ignore
+    }
+    return 'ALL';
+  });
   const [currentRows, setCurrentRows] = useState<TurnRow[]>([]);
   const [currentFecha, setCurrentFecha] = useState<string>(() => {
     const now = new Date();
@@ -68,12 +103,14 @@ export default function App() {
 
   const loadBootstrapData = useCallback(async () => {
     try {
-      const [cats, conts] = await Promise.all([
+      const [cats, conts, meta] = await Promise.all([
         getCatalogs(user?.rol === 'ADMIN'),
         getContratas(),
+        getContratasMeta(),
       ]);
       setCatalogs(cats);
       if (conts.length > 0) setContratas(conts);
+      if (meta.length > 0) setContratasMeta(meta);
     } catch {
       // Silencioso; cada tab maneja su feedback si falla
     }
@@ -142,7 +179,9 @@ export default function App() {
   const handleLoginSuccess = useCallback((loggedUser: UserSession) => {
     const today = getTodayIsoDate();
     setUser(loggedUser);
-    setIsHistoryUnlocked(false);
+    setAdminGroupFilter(normalizeGroup(loggedUser.grupo, 'ALL'));
+    setAdminSelectedContrata('ALL');
+    setIsHistoryUnlocked(shouldUnlockHistoryByDefault(loggedUser));
     setCurrentFecha(today);
     setChartFechaInicio(today);
     setChartFechaFin(today);
@@ -165,6 +204,7 @@ export default function App() {
     setAdminTurnsCache({});
     setAdminRangeCache({});
     setAdminSelectedContrata('ALL');
+    setAdminGroupFilter('ALL');
     clearOperationsCache();
     try {
       sessionStorage.removeItem(SESSION_KEY);
@@ -217,6 +257,44 @@ export default function App() {
     [catalogs],
   );
 
+  const handleAdminGroupFilterChange = useCallback(
+    (nextGroup: UserGroupScope) => {
+      if (user && normalizeGroup(user.grupo, 'ALL') !== 'ALL') return;
+      setAdminGroupFilter(nextGroup);
+      setAdminSelectedContrata('ALL');
+    },
+    [user],
+  );
+
+  const contrataGroupMap = useMemo(
+    () => new Map<string, OperalogGroup>(contratasMeta.map((c) => [c.nombre, c.grupo])),
+    [contratasMeta],
+  );
+
+  const scopedContratas = useMemo(() => {
+    if (adminGroupFilter === 'ALL') return contratas;
+    return contratas.filter((c) => (contrataGroupMap.get(c) ?? 'BT') === adminGroupFilter);
+  }, [contratas, contrataGroupMap, adminGroupFilter]);
+
+  const filterRowsByGroup = useCallback(
+    (rows: TurnRow[]): TurnRow[] => {
+      if (adminGroupFilter === 'ALL') return rows;
+      return rows.filter(
+        (r) => (r.grupo || contrataGroupMap.get(r.contratista) || 'BT') === adminGroupFilter,
+      );
+    },
+    [adminGroupFilter, contrataGroupMap],
+  );
+
+  const adminRowsForDate = useMemo(
+    () => filterRowsByGroup(adminTurnsCache[currentFecha] ?? []),
+    [filterRowsByGroup, adminTurnsCache, currentFecha],
+  );
+  const adminRangeRows = useMemo(
+    () => filterRowsByGroup(adminRangeCache[`${chartFechaInicio}__${chartFechaFin}`] ?? []),
+    [filterRowsByGroup, adminRangeCache, chartFechaInicio, chartFechaFin],
+  );
+
   if (!user) {
     return (
       <>
@@ -226,8 +304,6 @@ export default function App() {
     );
   }
 
-  const adminRowsForDate = adminTurnsCache[currentFecha] ?? [];
-  const adminRangeRows = adminRangeCache[`${chartFechaInicio}__${chartFechaFin}`] ?? [];
   const chartRows = user.rol === 'ADMIN' ? adminRangeRows : currentRows;
 
   return (
@@ -240,6 +316,8 @@ export default function App() {
         isHistoryUnlocked={isHistoryUnlocked}
         onUnlockHistory={handleUnlockHistory}
         onLockHistory={handleLockHistory}
+        adminGroupFilter={adminGroupFilter}
+        onAdminGroupFilterChange={handleAdminGroupFilterChange}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
@@ -252,19 +330,22 @@ export default function App() {
                 setCurrentFecha(nextFecha);
               }}
               allowDateChange={isHistoryUnlocked}
-              contratas={contratas}
+              contratas={scopedContratas}
               rows={adminRowsForDate}
               loading={adminLoading}
               onRefresh={() => void fetchAdminTurns(currentFecha, true)}
               selectedContrata={adminSelectedContrata}
               onSelectedContrataChange={setAdminSelectedContrata}
               onToast={addToast}
+              contrataGroupMap={contrataGroupMap}
+              activeGroup={adminGroupFilter}
             />
           ) : (
             <OperationsTab
               user={user}
               catalogs={catalogs}
               contratas={contratas}
+              contratasMeta={contratasMeta}
               initialFecha={currentFecha}
               onToast={addToast}
               onRowsChange={handleRowsChange}
@@ -284,7 +365,9 @@ export default function App() {
               rows={chartRows}
               horariosCatalog={activeHorarios}
               user={user}
-              contratas={contratas}
+              contratas={scopedContratas}
+              contrataGroupMap={contrataGroupMap}
+              activeGroup={adminGroupFilter}
               selectedContrata={adminSelectedContrata}
               onSelectedContrataChange={setAdminSelectedContrata}
               fecha={currentFecha}
@@ -322,6 +405,7 @@ export default function App() {
               });
             }}
             user={user}
+            activeGroup={adminGroupFilter}
           />
         )}
       </main>

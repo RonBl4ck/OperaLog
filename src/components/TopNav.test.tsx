@@ -69,3 +69,64 @@ describe('TopNav master history unlock via double-click on logo', () => {
     expect(onLockHistory).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('TopNav group badge and admin group switcher', () => {
+  it('renders group selector only for ADMIN with grupo === ALL and emits changes', () => {
+    const onAdminGroupFilterChange = vi.fn();
+    render(
+      <TopNav
+        user={{ ...ADMIN_USER, grupo: 'ALL' }}
+        activeTab="graficos"
+        onTabChange={vi.fn()}
+        onLogout={vi.fn()}
+        adminGroupFilter="ALL"
+        onAdminGroupFilterChange={onAdminGroupFilterChange}
+      />,
+    );
+
+    expect(screen.getByText('ADMIN · GENERAL')).toBeTruthy();
+    const groupBar = screen.getByRole('group', { name: 'Filtro de grupo' });
+    expect(groupBar).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'AP' }));
+    expect(onAdminGroupFilterChange).toHaveBeenCalledWith('AP');
+  });
+
+  it('hides group switcher and shows fixed badge for group-specific admins (BT, AP, MT)', () => {
+    render(
+      <TopNav
+        user={{ ...ADMIN_USER, usuario: 'admin.bt', grupo: 'BT' }}
+        activeTab="graficos"
+        onTabChange={vi.fn()}
+        onLogout={vi.fn()}
+        adminGroupFilter="BT"
+        onAdminGroupFilterChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('ADMIN · BT')).toBeTruthy();
+    expect(screen.queryByRole('group', { name: 'Filtro de grupo' })).toBeNull();
+    expect(screen.getByLabelText('Grupo asignado: BT')).toBeTruthy();
+  });
+
+  it('shows CONTRATA group badge without admin group switcher', () => {
+    render(
+      <TopNav
+        user={{
+          usuario: 'contrata.lumina',
+          rol: 'CONTRATA',
+          contratista: 'LUMINA',
+          nombre_mostrar: 'Contrata LUMINA',
+          grupo: 'AP',
+        }}
+        activeTab="registro"
+        onTabChange={vi.fn()}
+        onLogout={vi.fn()}
+        onAdminGroupFilterChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('CONTRATA · AP')).toBeTruthy();
+    expect(screen.queryByRole('group', { name: 'Filtro de grupo' })).toBeNull();
+  });
+});

@@ -1,17 +1,29 @@
-import { CatalogItem, FrontType, TurnRow, UserSession } from '../types/operalog';
+import {
+  CatalogItem,
+  ContrataMeta,
+  FrontType,
+  OperalogGroup,
+  TurnRow,
+  UserGroupScope,
+  UserSession,
+  matchesGroupCatalog,
+  normalizeGroup,
+} from '../types/operalog';
 
 const GAS_URL =
   ((import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_GAS_URL ?? '').trim();
 
 const STORAGE_KEYS = {
-  CATALOGS: 'operalog_demo_catalogs_v1',
-  TURNS: 'operalog_demo_turns_v1',
-  SESSION_CATALOGS: 'operalog_cache_catalogs_v1',
-  SESSION_CONTRATAS: 'operalog_cache_contratas_v1',
+  CATALOGS: 'operalog_demo_catalogs_v2',
+  TURNS: 'operalog_demo_turns_v2',
+  SESSION_CATALOGS: 'operalog_cache_catalogs_v2',
+  SESSION_CONTRATAS: 'operalog_cache_contratas_v2',
+  SESSION_CONTRATAS_META: 'operalog_cache_contratas_meta_v2',
 } as const;
 
 interface DemoUserRecord extends UserSession {
   pin: string;
+  grupo: UserGroupScope;
 }
 
 const DEMO_USERS: DemoUserRecord[] = [
@@ -21,6 +33,35 @@ const DEMO_USERS: DemoUserRecord[] = [
     rol: 'ADMIN',
     contratista: 'ALL',
     nombre_mostrar: 'Administrador PLUZ',
+    grupo: 'ALL',
+    ver_historico: true,
+  },
+  {
+    usuario: 'admin.bt',
+    pin: '1234',
+    rol: 'ADMIN',
+    contratista: 'ALL',
+    nombre_mostrar: 'Administrador BT',
+    grupo: 'BT',
+    ver_historico: false,
+  },
+  {
+    usuario: 'admin.ap',
+    pin: '1234',
+    rol: 'ADMIN',
+    contratista: 'ALL',
+    nombre_mostrar: 'Administrador AP',
+    grupo: 'AP',
+    ver_historico: false,
+  },
+  {
+    usuario: 'admin.mt',
+    pin: '1234',
+    rol: 'ADMIN',
+    contratista: 'ALL',
+    nombre_mostrar: 'Administrador MT',
+    grupo: 'MT',
+    ver_historico: false,
   },
   {
     usuario: 'contrata.alfa',
@@ -28,6 +69,7 @@ const DEMO_USERS: DemoUserRecord[] = [
     rol: 'CONTRATA',
     contratista: 'ALFA',
     nombre_mostrar: 'Contrata ALFA',
+    grupo: 'BT',
   },
   {
     usuario: 'contrata.beta',
@@ -35,37 +77,73 @@ const DEMO_USERS: DemoUserRecord[] = [
     rol: 'CONTRATA',
     contratista: 'BETA',
     nombre_mostrar: 'Contrata BETA',
+    grupo: 'BT',
+  },
+  {
+    usuario: 'contrata.lumina',
+    pin: '5678',
+    rol: 'CONTRATA',
+    contratista: 'LUMINA',
+    nombre_mostrar: 'Contrata LUMINA',
+    grupo: 'AP',
+  },
+  {
+    usuario: 'contrata.redesmt',
+    pin: '5678',
+    rol: 'CONTRATA',
+    contratista: 'REDES MT',
+    nombre_mostrar: 'Contrata REDES MT',
+    grupo: 'MT',
   },
 ];
 
-const DEMO_CONTRATAS = ['ALFA', 'BETA'];
+const DEMO_CONTRATAS_META: ContrataMeta[] = [
+  { nombre: 'ALFA', grupo: 'BT' },
+  { nombre: 'BETA', grupo: 'BT' },
+  { nombre: 'LUMINA', grupo: 'AP' },
+  { nombre: 'REDES MT', grupo: 'MT' },
+];
+
+const DEMO_CONTRATA_GROUP_MAP = new Map<string, OperalogGroup>(
+  DEMO_CONTRATAS_META.map((c) => [c.nombre, c.grupo]),
+);
 
 const DEFAULT_CATALOGS: CatalogItem[] = [
   // HORARIO (ALL)
-  { tipo: 'HORARIO', frente: 'ALL', valor: '06:00 - 22:00', orden: 1, activo: true },
-  { tipo: 'HORARIO', frente: 'ALL', valor: '07:00 - 23:00', orden: 2, activo: true },
-  { tipo: 'HORARIO', frente: 'ALL', valor: '07:00 - 16:00', orden: 3, activo: true },
-  { tipo: 'HORARIO', frente: 'ALL', valor: '15:00 - 07:00', orden: 4, activo: true },
-  { tipo: 'HORARIO', frente: 'ALL', valor: '23:00 - 07:00', orden: 5, activo: true },
+  { tipo: 'HORARIO', frente: 'ALL', valor: '06:00 - 22:00', orden: 1, activo: true, grupo: 'ALL' },
+  { tipo: 'HORARIO', frente: 'ALL', valor: '07:00 - 23:00', orden: 2, activo: true, grupo: 'ALL' },
+  { tipo: 'HORARIO', frente: 'ALL', valor: '07:00 - 16:00', orden: 3, activo: true, grupo: 'ALL' },
+  { tipo: 'HORARIO', frente: 'ALL', valor: '15:00 - 07:00', orden: 4, activo: true, grupo: 'ALL' },
+  { tipo: 'HORARIO', frente: 'ALL', valor: '23:00 - 07:00', orden: 5, activo: true, grupo: 'ALL' },
 
-  // ACTIVIDAD (DESPACHADORES)
-  { tipo: 'ACTIVIDAD', frente: 'DESPACHADORES', valor: 'RECLAMO', orden: 1, activo: true },
-  { tipo: 'ACTIVIDAD', frente: 'DESPACHADORES', valor: 'REPARACIONES', orden: 2, activo: true },
-  { tipo: 'ACTIVIDAD', frente: 'DESPACHADORES', valor: 'APOYO RECLAMOS', orden: 3, activo: true },
-  { tipo: 'ACTIVIDAD', frente: 'DESPACHADORES', valor: 'APOYO REPARACIONES', orden: 4, activo: true },
+  // ACTIVIDAD (DESPACHADORES - BT)
+  { tipo: 'ACTIVIDAD', frente: 'DESPACHADORES', valor: 'RECLAMO', orden: 1, activo: true, grupo: 'BT' },
+  { tipo: 'ACTIVIDAD', frente: 'DESPACHADORES', valor: 'REPARACIONES', orden: 2, activo: true, grupo: 'BT' },
+  { tipo: 'ACTIVIDAD', frente: 'DESPACHADORES', valor: 'APOYO RECLAMOS', orden: 3, activo: true, grupo: 'BT' },
+  { tipo: 'ACTIVIDAD', frente: 'DESPACHADORES', valor: 'APOYO REPARACIONES', orden: 4, activo: true, grupo: 'BT' },
 
-  // SKILL (RECLAMOS)
-  { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'TOMA', orden: 1, activo: true },
-  { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'TOMA + CNX AEREA', orden: 2, activo: true },
-  { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'APOYO RECLAMOS', orden: 3, activo: true },
+  // SKILL (RECLAMOS - BT)
+  { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'TOMA', orden: 1, activo: true, grupo: 'BT' },
+  { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'TOMA + CNX AEREA', orden: 2, activo: true, grupo: 'BT' },
+  { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'APOYO RECLAMOS', orden: 3, activo: true, grupo: 'BT' },
 
-  // SKILL (TEKO)
-  { tipo: 'SKILL', frente: 'TEKO', valor: 'CNX AEREA + RED AEREA', orden: 1, activo: true },
+  // SKILL (TEKO - BT)
+  { tipo: 'SKILL', frente: 'TEKO', valor: 'CNX AEREA + RED AEREA', orden: 1, activo: true, grupo: 'BT' },
 
-  // SKILL (REPARACIONES)
-  { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'CNX SUBTERRANEA', orden: 1, activo: true },
-  { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'RED + CNX SUBTERRANEA', orden: 2, activo: true },
-  { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'APOYO REPARACIONES', orden: 3, activo: true },
+  // SKILL (REPARACIONES - BT)
+  { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'CNX SUBTERRANEA', orden: 1, activo: true, grupo: 'BT' },
+  { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'RED + CNX SUBTERRANEA', orden: 2, activo: true, grupo: 'BT' },
+  { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'APOYO REPARACIONES', orden: 3, activo: true, grupo: 'BT' },
+
+  // SAMPLE AP
+  { tipo: 'ACTIVIDAD', frente: 'DESPACHADORES', valor: 'DESPACHO AP', orden: 1, activo: true, grupo: 'AP' },
+  { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'LUMINARIA LED', orden: 1, activo: true, grupo: 'AP' },
+  { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'POSTE Y PASTORAL AP', orden: 1, activo: true, grupo: 'AP' },
+
+  // SAMPLE MT
+  { tipo: 'ACTIVIDAD', frente: 'DESPACHADORES', valor: 'DESPACHO MT', orden: 1, activo: true, grupo: 'MT' },
+  { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'SUBESTACION MT', orden: 1, activo: true, grupo: 'MT' },
+  { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'RED AEREA MT', orden: 1, activo: true, grupo: 'MT' },
 ];
 
 export function getTodayIsoDate(): string {
@@ -336,6 +414,7 @@ export interface PublicUserOption {
   rol: 'ADMIN' | 'CONTRATA';
   contratista: string;
   nombre_mostrar: string;
+  grupo?: UserGroupScope;
 }
 
 export async function getPublicUsers(): Promise<PublicUserOption[]> {
@@ -387,7 +466,13 @@ export async function login(usuario: string, pin: string): Promise<UserSession> 
   }
 
   const res = await gasGet<
-    UserSession | { user?: UserSession; catalogs?: CatalogItem[]; contratas?: string[] }
+    | UserSession
+    | {
+        user?: UserSession;
+        catalogs?: CatalogItem[];
+        contratas?: string[];
+        contratasMeta?: ContrataMeta[];
+      }
   >('login', {
     usuario: normalizedUser,
     pin: normalizedPin,
@@ -401,6 +486,12 @@ export async function login(usuario: string, pin: string): Promise<UserSession> 
       if (Array.isArray(res.contratas)) {
         sessionStorage.setItem(STORAGE_KEYS.SESSION_CONTRATAS, JSON.stringify(res.contratas));
       }
+      if (Array.isArray(res.contratasMeta)) {
+        sessionStorage.setItem(
+          STORAGE_KEYS.SESSION_CONTRATAS_META,
+          JSON.stringify(res.contratasMeta),
+        );
+      }
     } catch {
       // Ignore sessionStorage write error
     }
@@ -410,25 +501,38 @@ export async function login(usuario: string, pin: string): Promise<UserSession> 
   return res as UserSession;
 }
 
-export async function getCatalogs(includeInactive = false): Promise<CatalogItem[]> {
+export async function getCatalogs(
+  includeInactive = false,
+  grupo?: UserGroupScope,
+): Promise<CatalogItem[]> {
   if (isDemoMode()) {
-    return readLocalCatalogs();
+    const all = readLocalCatalogs();
+    return all.filter(
+      (c) => (includeInactive || c.activo) && matchesGroupCatalog(c.grupo, grupo),
+    );
   }
 
   try {
     const cached = sessionStorage.getItem(STORAGE_KEYS.SESSION_CATALOGS);
     if (cached) {
-      return JSON.parse(cached) as CatalogItem[];
+      const parsed = JSON.parse(cached) as CatalogItem[];
+      return parsed.filter(
+        (c) => (includeInactive || c.activo) && matchesGroupCatalog(c.grupo, grupo),
+      );
     }
   } catch {
     // Ignore sessionStorage read error
   }
 
   const action = includeInactive ? 'getAllCatalogs' : 'getCatalogs';
-  const res = await gasGet<CatalogItem[] | { catalogs?: CatalogItem[] }>(action);
+  const params: Record<string, string> = {};
+  if (grupo) params.grupo = grupo;
+  const res = await gasGet<CatalogItem[] | { catalogs?: CatalogItem[] }>(action, params);
   const catalogs = Array.isArray(res) ? res : (res.catalogs ?? []);
   try {
-    sessionStorage.setItem(STORAGE_KEYS.SESSION_CATALOGS, JSON.stringify(catalogs));
+    if (!grupo || grupo === 'ALL') {
+      sessionStorage.setItem(STORAGE_KEYS.SESSION_CATALOGS, JSON.stringify(catalogs));
+    }
   } catch {
     // Ignore sessionStorage write error
   }
@@ -450,24 +554,70 @@ export async function refreshAllCatalogs(): Promise<CatalogItem[]> {
   return catalogs;
 }
 
-export async function getContratas(): Promise<string[]> {
+export async function getContratasMeta(): Promise<ContrataMeta[]> {
   if (isDemoMode()) {
-    return [...DEMO_CONTRATAS];
+    return [...DEMO_CONTRATAS_META];
   }
 
   try {
-    const cached = sessionStorage.getItem(STORAGE_KEYS.SESSION_CONTRATAS);
+    const cached = sessionStorage.getItem(STORAGE_KEYS.SESSION_CONTRATAS_META);
     if (cached) {
-      return JSON.parse(cached) as string[];
+      return JSON.parse(cached) as ContrataMeta[];
     }
   } catch {
     // Ignore sessionStorage read error
   }
 
-  const res = await gasGet<string[] | { contratas?: string[] }>('getContratas');
+  const res = await gasGet<{ contratas?: string[]; contratasMeta?: ContrataMeta[] }>(
+    'getContratas',
+  );
+  const meta: ContrataMeta[] = Array.isArray(res.contratasMeta)
+    ? res.contratasMeta
+    : (res.contratas ?? []).map((nombre) => ({ nombre, grupo: 'BT' }));
+  try {
+    sessionStorage.setItem(STORAGE_KEYS.SESSION_CONTRATAS_META, JSON.stringify(meta));
+  } catch {
+    // Ignore sessionStorage write error
+  }
+  return meta;
+}
+
+export async function getContratas(grupo?: UserGroupScope): Promise<string[]> {
+  if (isDemoMode()) {
+    const filtered =
+      grupo && grupo !== 'ALL'
+        ? DEMO_CONTRATAS_META.filter((c) => c.grupo === grupo)
+        : DEMO_CONTRATAS_META;
+    return filtered.map((c) => c.nombre);
+  }
+
+  if (!grupo || grupo === 'ALL') {
+    try {
+      const cached = sessionStorage.getItem(STORAGE_KEYS.SESSION_CONTRATAS);
+      if (cached) {
+        return JSON.parse(cached) as string[];
+      }
+    } catch {
+      // Ignore sessionStorage read error
+    }
+  }
+
+  const params: Record<string, string> = {};
+  if (grupo) params.grupo = grupo;
+  const res = await gasGet<
+    string[] | { contratas?: string[]; contratasMeta?: ContrataMeta[] }
+  >('getContratas', params);
   const contratas = Array.isArray(res) ? res : (res.contratas ?? []);
   try {
-    sessionStorage.setItem(STORAGE_KEYS.SESSION_CONTRATAS, JSON.stringify(contratas));
+    if (!grupo || grupo === 'ALL') {
+      sessionStorage.setItem(STORAGE_KEYS.SESSION_CONTRATAS, JSON.stringify(contratas));
+      if (!Array.isArray(res) && Array.isArray(res.contratasMeta)) {
+        sessionStorage.setItem(
+          STORAGE_KEYS.SESSION_CONTRATAS_META,
+          JSON.stringify(res.contratasMeta),
+        );
+      }
+    }
   } catch {
     // Ignore sessionStorage write error
   }
@@ -478,17 +628,26 @@ export async function getTurn(
   fecha: string,
   contratista: string,
   rol: string,
+  grupo?: UserGroupScope,
 ): Promise<TurnRow[]> {
   if (isDemoMode()) {
     const all = readLocalTurns();
-    return all.filter((row) => {
-      if (row.fecha !== fecha) return false;
-      if (rol === 'ADMIN' && contratista === 'ALL') return true;
-      return row.contratista === contratista;
-    });
+    return all
+      .map((row) => ({
+        ...row,
+        grupo: (row.grupo ?? DEMO_CONTRATA_GROUP_MAP.get(row.contratista) ?? 'BT') as OperalogGroup,
+      }))
+      .filter((row) => {
+        if (row.fecha !== fecha) return false;
+        if (grupo && grupo !== 'ALL' && row.grupo !== grupo) return false;
+        if (rol === 'ADMIN' && contratista === 'ALL') return true;
+        return row.contratista === contratista;
+      });
   }
 
-  const res = await gasGet<TurnRow[] | { rows?: TurnRow[] }>('getTurn', { fecha, contratista, rol });
+  const params: Record<string, string> = { fecha, contratista, rol };
+  if (grupo) params.grupo = grupo;
+  const res = await gasGet<TurnRow[] | { rows?: TurnRow[] }>('getTurn', params);
   return Array.isArray(res) ? res : (res.rows ?? []);
 }
 
@@ -497,24 +656,33 @@ export async function getTurnsRange(
   fechaFin: string,
   contratista: string,
   rol: string,
+  grupo?: UserGroupScope,
 ): Promise<TurnRow[]> {
   if (isDemoMode()) {
     const all = readLocalTurns();
-    return all.filter((row) => {
-      if (!row.fecha) return false;
-      if (fechaInicio && row.fecha < fechaInicio) return false;
-      if (fechaFin && row.fecha > fechaFin) return false;
-      if (rol === 'ADMIN' && (contratista === 'ALL' || !contratista)) return true;
-      return row.contratista === contratista;
-    });
+    return all
+      .map((row) => ({
+        ...row,
+        grupo: (row.grupo ?? DEMO_CONTRATA_GROUP_MAP.get(row.contratista) ?? 'BT') as OperalogGroup,
+      }))
+      .filter((row) => {
+        if (!row.fecha) return false;
+        if (fechaInicio && row.fecha < fechaInicio) return false;
+        if (fechaFin && row.fecha > fechaFin) return false;
+        if (grupo && grupo !== 'ALL' && row.grupo !== grupo) return false;
+        if (rol === 'ADMIN' && (contratista === 'ALL' || !contratista)) return true;
+        return row.contratista === contratista;
+      });
   }
 
-  const res = await gasGet<TurnRow[] | { rows?: TurnRow[] }>('getTurnsRange', {
+  const params: Record<string, string> = {
     fechaInicio,
     fechaFin,
     contratista,
     rol,
-  });
+  };
+  if (grupo) params.grupo = grupo;
+  const res = await gasGet<TurnRow[] | { rows?: TurnRow[] }>('getTurnsRange', params);
   return Array.isArray(res) ? res : (res.rows ?? []);
 }
 
@@ -549,6 +717,7 @@ export interface SaveTurnPayload {
   contratista: string;
   rows: TurnRow[];
   usuario?: string;
+  grupo?: OperalogGroup;
 }
 
 export async function saveTurn(
@@ -557,6 +726,9 @@ export async function saveTurn(
   if (isPastIsoDate(payload.fecha)) {
     throw new Error('No se pueden modificar ni guardar registros de días anteriores.');
   }
+
+  const resolvedGrupo =
+    payload.grupo ?? DEMO_CONTRATA_GROUP_MAP.get(payload.contratista) ?? 'BT';
 
   if (isDemoMode()) {
     const all = readLocalTurns();
@@ -567,6 +739,7 @@ export async function saveTurn(
       ...row,
       fecha: payload.fecha,
       contratista: payload.contratista,
+      grupo: row.grupo ?? resolvedGrupo,
     }));
     writeLocalTurns([...filtered, ...normalizedRows]);
     return { ok: true, savedCount: normalizedRows.length };
@@ -577,6 +750,7 @@ export async function saveTurn(
     contratista: payload.contratista,
     rows: payload.rows,
     usuario: payload.usuario ?? '',
+    grupo: payload.grupo,
   });
 }
 
@@ -584,6 +758,7 @@ export interface SaveCatalogPayload {
   items: CatalogItem[];
   rol?: 'ADMIN' | 'CONTRATA';
   usuario?: string;
+  grupo?: UserGroupScope;
 }
 
 export async function saveCatalog(
@@ -592,8 +767,22 @@ export async function saveCatalog(
   const items = Array.isArray(payload) ? payload : payload.items;
   const rol = Array.isArray(payload) ? 'ADMIN' : (payload.rol ?? 'ADMIN');
   const usuario = Array.isArray(payload) ? '' : (payload.usuario ?? '');
+  const grupo = Array.isArray(payload) ? undefined : payload.grupo;
 
   if (isDemoMode()) {
+    if (grupo === 'BT' || grupo === 'AP' || grupo === 'MT') {
+      const existing = readLocalCatalogs();
+      const otherGroups = existing.filter(
+        (c) => normalizeGroup(c.grupo, c.tipo === 'HORARIO' ? 'ALL' : 'BT') !== grupo,
+      );
+      const scopedItems = items.map((c) => ({
+        ...c,
+        grupo: normalizeGroup(c.grupo, grupo),
+      }));
+      const merged = [...otherGroups, ...scopedItems];
+      writeLocalCatalogs(merged);
+      return { ok: true, items: merged };
+    }
     writeLocalCatalogs(items);
     return { ok: true, items };
   }
@@ -602,6 +791,7 @@ export async function saveCatalog(
     items,
     rol,
     usuario,
+    ...(grupo ? { grupo } : {}),
   });
   const updated = result.items ?? items;
   try {

@@ -9,8 +9,8 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
-  Download,
   Eye,
+  FileSpreadsheet,
   Filter,
   Loader2,
   RefreshCw,
@@ -19,9 +19,12 @@ import {
 import {
   FRONT_CONFIGS,
   type FrontType,
+  type OperalogGroup,
   type ToastMessage,
   type TurnRow,
+  type UserGroupScope,
 } from '../types/operalog';
+import { downloadAdminTurnsExcel } from '../utils/excelTemplate';
 
 interface AdminTurnsViewProps {
   fecha: string;
@@ -34,18 +37,13 @@ interface AdminTurnsViewProps {
   onSelectedContrataChange: (contratista: string) => void;
   onToast: (toast: Omit<ToastMessage, 'id'>) => void;
   allowDateChange?: boolean;
-}
-
-function escapeCsvCell(value: string): string {
-  const s = value ?? '';
-  if (/[",\n\r]/.test(s)) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
+  contrataGroupMap?: Map<string, OperalogGroup>;
+  activeGroup?: UserGroupScope;
 }
 
 type SortColumn =
   | 'contratista'
+  | 'grupo'
   | 'frente'
   | 'nombres'
   | 'usuario_ssam'
@@ -58,6 +56,7 @@ type SortDirection = 'asc' | 'desc';
 
 const TABLE_COLUMNS: { key: SortColumn; label: string }[] = [
   { key: 'contratista', label: 'Contratista' },
+  { key: 'grupo', label: 'Grupo' },
   { key: 'frente', label: 'Frente' },
   { key: 'nombres', label: 'Nombres' },
   { key: 'usuario_ssam', label: 'Usuario SSAM' },
@@ -66,6 +65,12 @@ const TABLE_COLUMNS: { key: SortColumn; label: string }[] = [
   { key: 'skill', label: 'Skill' },
   { key: 'horario', label: 'Horario' },
 ];
+
+const GROUP_BADGE_STYLES: Record<OperalogGroup, { bg: string; color: string }> = {
+  BT: { bg: 'rgba(60, 90, 159, 0.1)', color: '#3C5A9F' },
+  AP: { bg: 'rgba(245, 158, 11, 0.15)', color: '#B45309' },
+  MT: { bg: 'rgba(124, 58, 237, 0.12)', color: '#6D28D9' },
+};
 
 interface MultiSelectOption {
   value: string;
@@ -214,6 +219,8 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
   onSelectedContrataChange,
   onToast,
   allowDateChange = true,
+  contrataGroupMap,
+  activeGroup = 'ALL',
 }) => {
   const [selectedContratas, setSelectedContratas] = useState<string[]>(() =>
     selectedContrata && selectedContrata !== 'ALL' ? [selectedContrata] : [],
@@ -279,6 +286,9 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
     });
   }, [rows, selectedContratas, selectedFronts, search]);
 
+  const resolveRowGroup = (row: TurnRow): OperalogGroup =>
+    row.grupo || contrataGroupMap?.get(row.contratista) || 'BT';
+
   const sortedRows = useMemo(() => {
     if (!sortConfig) return filteredRows;
     const { column, direction } = sortConfig;
@@ -288,14 +298,18 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
       const valA =
         column === 'frente'
           ? (frontLabelMap.get(a.frente) ?? a.frente)
-          : (a[column] ?? '');
+          : column === 'grupo'
+            ? (a.grupo || contrataGroupMap?.get(a.contratista) || 'BT')
+            : (a[column] ?? '');
       const valB =
         column === 'frente'
           ? (frontLabelMap.get(b.frente) ?? b.frente)
-          : (b[column] ?? '');
+          : column === 'grupo'
+            ? (b.grupo || contrataGroupMap?.get(b.contratista) || 'BT')
+            : (b[column] ?? '');
       return valA.localeCompare(valB, 'es', { sensitivity: 'base', numeric: true }) * multiplier;
     });
-  }, [filteredRows, sortConfig, frontLabelMap]);
+  }, [filteredRows, sortConfig, frontLabelMap, contrataGroupMap]);
 
   const handleSort = (column: SortColumn) => {
     setSortConfig((prev) => {
@@ -309,7 +323,7 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
     });
   };
 
-  const handleExportCsv = () => {
+  const handleExportExcel = async () => {
     if (sortedRows.length === 0) {
       onToast({
         type: 'info',
@@ -319,55 +333,24 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
       return;
     }
 
-    const headers = [
-      'Fecha',
-      'Contratista',
-      'Frente',
-      'Nombres',
-      'Usuario SSAM',
-      'Celular',
-      'Actividad',
-      'Skill',
-      'Horario',
-    ];
-
-    const lines = [
-      headers.join(','),
-      ...sortedRows.map((r) =>
-        [
-          r.fecha,
-          r.contratista,
-          r.frente,
-          r.nombres,
-          r.usuario_ssam,
-          r.celular,
-          r.actividad,
-          r.skill,
-          r.horario,
-        ]
-          .map(escapeCsvCell)
-          .join(','),
-      ),
-    ];
-
+    const groupSuffix = activeGroup && activeGroup !== 'ALL' ? activeGroup : 'ALL';
     const contrataSuffix =
       selectedContratas.length === 0
         ? 'ALL'
         : selectedContratas.length === 1
           ? selectedContratas[0]
           : 'MULTIPLE';
+    const filename = `OperaLog_${fecha}_${groupSuffix}_${contrataSuffix}.xlsx`;
 
-    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], {
-      type: 'text/csv;charset=utf-8;',
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `OperaLog_${fecha}_${contrataSuffix}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    try {
+      await downloadAdminTurnsExcel(sortedRows, filename, frontLabelMap, contrataGroupMap);
+    } catch (err) {
+      onToast({
+        type: 'error',
+        title: 'Error al exportar Excel',
+        description: err instanceof Error ? err.message : 'Intente nuevamente.',
+      });
+    }
   };
 
   return (
@@ -459,12 +442,12 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
 
             <button
               type="button"
-              onClick={handleExportCsv}
+              onClick={() => void handleExportExcel()}
               className="tactile-btn inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white cursor-pointer shrink-0"
               style={{ backgroundColor: 'var(--pluz-primary)' }}
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Exportar CSV</span>
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Exportar Excel</span>
             </button>
           </div>
         </div>
@@ -584,14 +567,28 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y" style={{ borderColor: 'var(--pluz-border)' }}>
-                {sortedRows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50/70">
-                    <td className="py-2 px-3 font-semibold text-xs" style={{ color: 'var(--pluz-primary)' }}>
-                      {row.contratista}
-                    </td>
-                    <td className="py-2 px-3 text-xs font-medium" style={{ color: 'var(--pluz-ink)' }}>
-                      {frontLabelMap.get(row.frente) ?? row.frente}
-                    </td>
+                {sortedRows.map((row) => {
+                  const rowGroup = resolveRowGroup(row);
+                  const groupStyle = GROUP_BADGE_STYLES[rowGroup];
+                  return (
+                    <tr key={row.id} className="hover:bg-slate-50/70">
+                      <td className="py-2 px-3 font-semibold text-xs" style={{ color: 'var(--pluz-primary)' }}>
+                        {row.contratista}
+                      </td>
+                      <td className="py-2 px-3">
+                        <span
+                          className="inline-block px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider"
+                          style={{
+                            backgroundColor: groupStyle.bg,
+                            color: groupStyle.color,
+                          }}
+                        >
+                          {rowGroup}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-xs font-medium" style={{ color: 'var(--pluz-ink)' }}>
+                        {frontLabelMap.get(row.frente) ?? row.frente}
+                      </td>
                     <td className="py-2 px-3 font-medium" style={{ color: 'var(--pluz-ink)' }}>
                       {row.nombres}
                     </td>
@@ -624,8 +621,9 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
                         </span>
                       )}
                     </td>
-                  </tr>
-                ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

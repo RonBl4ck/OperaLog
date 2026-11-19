@@ -10,7 +10,7 @@ import {
   Unlock,
 } from 'lucide-react';
 import { isDemoMode } from '../services/gasClient';
-import type { UserSession } from '../types/operalog';
+import { normalizeGroup, type UserGroupScope, type UserSession } from '../types/operalog';
 
 export type AppTab = 'registro' | 'graficos' | 'catalogos';
 
@@ -22,7 +22,16 @@ export interface TopNavProps {
   isHistoryUnlocked?: boolean;
   onUnlockHistory?: (password: string) => boolean;
   onLockHistory?: () => void;
+  adminGroupFilter?: UserGroupScope;
+  onAdminGroupFilterChange?: (g: UserGroupScope) => void;
 }
+
+const GROUP_OPTIONS: { id: UserGroupScope; label: string }[] = [
+  { id: 'ALL', label: 'Todos' },
+  { id: 'BT', label: 'BT' },
+  { id: 'AP', label: 'AP' },
+  { id: 'MT', label: 'MT' },
+];
 
 interface TabDef {
   id: AppTab;
@@ -45,9 +54,14 @@ export function TopNav({
   isHistoryUnlocked = false,
   onUnlockHistory,
   onLockHistory,
+  adminGroupFilter = 'ALL',
+  onAdminGroupFilterChange,
 }: TopNavProps) {
   const demoMode = isDemoMode();
   const isAdmin = user.rol === 'ADMIN';
+  const userGroup = normalizeGroup(user.grupo, isAdmin ? 'ALL' : 'BT');
+  const groupBadgeLabel = userGroup === 'ALL' ? 'GENERAL' : userGroup;
+  const canSwitchGroup = isAdmin && userGroup === 'ALL';
 
   const [unlockMenuOpen, setUnlockMenuOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
@@ -317,7 +331,7 @@ export function TopNav({
                       : 'var(--pluz-success)',
                 }}
               >
-                {user.rol}
+                {user.rol} · {groupBadgeLabel}
               </span>
             </div>
 
@@ -338,41 +352,84 @@ export function TopNav({
         </div>
 
         {/* Navigation Tabs Row */}
-        <nav
-          aria-label="Navegación principal"
-          className="flex items-center gap-1 overflow-x-auto -mb-px"
-        >
-          {visibleTabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => onTabChange(tab.id)}
-                aria-current={isActive ? 'page' : undefined}
-                className="tactile-btn relative inline-flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold whitespace-nowrap rounded-t-lg cursor-pointer"
+        <div className="flex items-center justify-between gap-2 overflow-x-auto -mb-px">
+          <nav
+            aria-label="Navegación principal"
+            className="flex items-center gap-1"
+          >
+            {visibleTabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => onTabChange(tab.id)}
+                  aria-current={isActive ? 'page' : undefined}
+                  className="tactile-btn relative inline-flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold whitespace-nowrap rounded-t-lg cursor-pointer"
+                  style={{
+                    color: isActive ? 'var(--pluz-primary)' : 'var(--pluz-muted)',
+                    backgroundColor: isActive ? 'rgba(60, 90, 159, 0.05)' : 'transparent',
+                  }}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  <span>{tab.label}</span>
+                  {isActive && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute bottom-0 left-2 right-2 h-[3px] rounded-t-full"
+                      style={{
+                        background:
+                          'linear-gradient(90deg, var(--pluz-primary) 0%, var(--pluz-primary) 70%, var(--pluz-accent) 100%)',
+                      }}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
+          {isAdmin &&
+            (canSwitchGroup && onAdminGroupFilterChange ? (
+              <div
+                role="group"
+                aria-label="Filtro de grupo"
+                className="flex items-center gap-1 py-1.5 shrink-0"
+              >
+                {GROUP_OPTIONS.map((opt) => {
+                  const isSelected = adminGroupFilter === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => onAdminGroupFilterChange(opt.id)}
+                      className="px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors cursor-pointer"
+                      style={{
+                        backgroundColor: isSelected ? 'var(--pluz-primary)' : 'var(--pluz-surface)',
+                        color: isSelected ? '#FFFFFF' : 'var(--pluz-muted)',
+                        borderColor: isSelected ? 'var(--pluz-primary)' : 'var(--pluz-border)',
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : userGroup !== 'ALL' ? (
+              <span
+                aria-label={`Grupo asignado: ${userGroup}`}
+                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border shrink-0"
                 style={{
-                  color: isActive ? 'var(--pluz-primary)' : 'var(--pluz-muted)',
-                  backgroundColor: isActive ? 'rgba(60, 90, 159, 0.05)' : 'transparent',
+                  backgroundColor: 'rgba(60, 90, 159, 0.08)',
+                  borderColor: 'rgba(60, 90, 159, 0.25)',
+                  color: 'var(--pluz-primary)',
                 }}
               >
-                <Icon className="w-4 h-4 shrink-0" />
-                <span>{tab.label}</span>
-                {isActive && (
-                  <span
-                    aria-hidden="true"
-                    className="absolute bottom-0 left-2 right-2 h-[3px] rounded-t-full"
-                    style={{
-                      background:
-                        'linear-gradient(90deg, var(--pluz-primary) 0%, var(--pluz-primary) 70%, var(--pluz-accent) 100%)',
-                    }}
-                  />
-                )}
-              </button>
-            );
-          })}
-        </nav>
+                Grupo {userGroup}
+              </span>
+            ) : null)}
+        </div>
       </div>
     </header>
   );

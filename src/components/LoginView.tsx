@@ -17,20 +17,38 @@ interface DemoAccount {
 const DEMO_ACCOUNTS: DemoAccount[] = [
   {
     label: 'admin.pluz / 1234',
-    roleLabel: 'ADMIN',
+    roleLabel: 'ADMIN · GENERAL',
     usuario: 'admin.pluz',
     pin: '1234',
   },
   {
+    label: 'admin.bt / 1234',
+    roleLabel: 'ADMIN · BT',
+    usuario: 'admin.bt',
+    pin: '1234',
+  },
+  {
+    label: 'admin.ap / 1234',
+    roleLabel: 'ADMIN · AP',
+    usuario: 'admin.ap',
+    pin: '1234',
+  },
+  {
     label: 'contrata.alfa / 5678',
-    roleLabel: 'CONTRATA',
+    roleLabel: 'CONTRATA · BT',
     usuario: 'contrata.alfa',
     pin: '5678',
   },
   {
-    label: 'contrata.beta / 5678',
-    roleLabel: 'CONTRATA',
-    usuario: 'contrata.beta',
+    label: 'contrata.lumina / 5678',
+    roleLabel: 'CONTRATA · AP',
+    usuario: 'contrata.lumina',
+    pin: '5678',
+  },
+  {
+    label: 'contrata.redesmt / 5678',
+    roleLabel: 'CONTRATA · MT',
+    usuario: 'contrata.redesmt',
     pin: '5678',
   },
 ];
@@ -317,11 +335,11 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
                           className="text-[10px] font-bold px-1.5 py-0.2 rounded"
                           style={{
                             backgroundColor:
-                              acc.roleLabel === 'ADMIN'
+                              acc.roleLabel.startsWith('ADMIN')
                                 ? 'rgba(60, 90, 159, 0.14)'
                                 : 'rgba(108, 171, 94, 0.16)',
                             color:
-                              acc.roleLabel === 'ADMIN'
+                              acc.roleLabel.startsWith('ADMIN')
                                 ? 'var(--pluz-primary)'
                                 : 'var(--pluz-success)',
                           }}

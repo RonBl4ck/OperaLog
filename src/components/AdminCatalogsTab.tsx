@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock,
   Info,
+  Layers,
   Pencil,
   Plus,
   RefreshCw,
@@ -20,7 +21,15 @@ import {
   X,
 } from 'lucide-react';
 import { refreshAllCatalogs, saveCatalog } from '../services/gasClient';
-import { FRONT_CONFIGS, type CatalogItem, type UserSession } from '../types/operalog';
+import {
+  FRONT_CONFIGS,
+  OPERALOG_GROUPS,
+  normalizeGroup,
+  type CatalogItem,
+  type OperalogGroup,
+  type UserGroupScope,
+  type UserSession,
+} from '../types/operalog';
 
 type CatalogTipo = CatalogItem['tipo'];
 
@@ -32,6 +41,7 @@ export interface AdminCatalogsTabProps {
   catalog: CatalogItem[];
   onCatalogSaved: (updatedCatalog: CatalogItem[]) => void;
   user?: UserSession;
+  activeGroup?: UserGroupScope;
 }
 
 interface TipoConfig {
@@ -95,9 +105,25 @@ const TIPO_CONFIGS: Record<CatalogTipo, TipoConfig> = {
       { value: 'ALL', label: 'Todos (ALL)' },
     ],
   },
+  FRENTE: {
+    id: 'FRENTE',
+    label: 'Frentes / Bloques',
+    singular: 'frente',
+    icon: Layers,
+    description:
+      'Activa, desactiva u ordena los bloques de registro que ven las contratas de este grupo.',
+    placeholder: 'ej. RECLAMOS',
+    defaultFrente: 'ALL',
+    frenteOptions: FRONT_CONFIGS.map((f) => ({ value: f.id, label: f.label })),
+  },
 };
 
-const TIPO_TABS: CatalogTipo[] = ['HORARIO', 'SKILL', 'ACTIVIDAD'];
+const TIPO_TABS: CatalogTipo[] = ['HORARIO', 'SKILL', 'ACTIVIDAD', 'FRENTE'];
+
+function itemMatchesGroup(it: CatalogItem, targetGroup: OperalogGroup): boolean {
+  const itemGroup = normalizeGroup(it.grupo, it.tipo === 'HORARIO' ? 'ALL' : 'BT');
+  return itemGroup === 'ALL' || itemGroup === targetGroup;
+}
 
 let uidCounter = 0;
 function nextUid(): string {
@@ -123,7 +149,27 @@ export function AdminCatalogsTab({
   catalog,
   onCatalogSaved,
   user,
+  activeGroup,
 }: AdminCatalogsTabProps) {
+  const userNormalizedGroup = normalizeGroup(user?.grupo, 'ALL');
+  const isGeneralAdmin = !user || userNormalizedGroup === 'ALL';
+
+  const [selectedGroup, setSelectedGroup] = useState<OperalogGroup>(() => {
+    const initial = activeGroup ?? user?.grupo;
+    const normalized = normalizeGroup(initial, 'ALL');
+    return normalized === 'ALL' ? 'BT' : normalized;
+  });
+
+  useEffect(() => {
+    if (isGeneralAdmin && activeGroup && activeGroup !== 'ALL') {
+      setSelectedGroup(activeGroup);
+    }
+  }, [isGeneralAdmin, activeGroup]);
+
+  const effectiveGroup: OperalogGroup = isGeneralAdmin
+    ? selectedGroup
+    : (userNormalizedGroup as OperalogGroup);
+
   const [items, setItems] = useState<EditableCatalogItem[]>(() => toEditableItems(catalog));
   const [activeTipo, setActiveTipo] = useState<CatalogTipo>('HORARIO');
   const [frenteFilter, setFrenteFilter] = useState<string>('ALL_FILTER');
@@ -153,37 +199,44 @@ export function AdminCatalogsTab({
 
   const activeConfig = TIPO_CONFIGS[activeTipo];
 
+  const groupScopedItems = useMemo(
+    () => items.filter((it) => itemMatchesGroup(it, effectiveGroup)),
+    [items, effectiveGroup],
+  );
+
   const availableFrentePills = useMemo(() => {
-    if (activeTipo === 'HORARIO') return [];
+    if (activeTipo === 'HORARIO' || activeTipo === 'FRENTE') return [];
     const configured = activeConfig.frenteOptions.map((o) => o.value);
-    const inItems = items
+    const inItems = groupScopedItems
       .filter((it) => it.tipo === activeTipo)
       .map((it) => it.frente);
     return Array.from(new Set([...configured, ...inItems]));
-  }, [activeTipo, activeConfig.frenteOptions, items]);
+  }, [activeTipo, activeConfig.frenteOptions, groupScopedItems]);
 
-  // Group items of activeTipo by frente, sorted by orden
+  // Group items of activeTipo by frente (or 'ALL' for FRENTE), sorted by orden
   const groupedOrderMap = useMemo(() => {
     const map = new Map<string, EditableCatalogItem[]>();
-    for (const it of items) {
+    for (const it of groupScopedItems) {
       if (it.tipo !== activeTipo) continue;
-      const list = map.get(it.frente) ?? [];
+      const key = activeTipo === 'FRENTE' ? 'ALL' : it.frente;
+      const list = map.get(key) ?? [];
       list.push(it);
-      map.set(it.frente, list);
+      map.set(key, list);
     }
     for (const list of map.values()) {
       list.sort((a, b) => a.orden - b.orden);
     }
     return map;
-  }, [items, activeTipo]);
+  }, [groupScopedItems, activeTipo]);
 
   const visibleItems = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    return items
+    return groupScopedItems
       .filter((it) => {
         if (it.tipo !== activeTipo) return false;
         if (
           activeTipo !== 'HORARIO' &&
+          activeTipo !== 'FRENTE' &&
           frenteFilter !== 'ALL_FILTER' &&
           it.frente !== frenteFilter
         ) {
@@ -196,17 +249,19 @@ export function AdminCatalogsTab({
       })
       .slice()
       .sort((a, b) => {
-        if (a.frente !== b.frente) return a.frente.localeCompare(b.frente);
+        if (activeTipo !== 'FRENTE' && a.frente !== b.frente) {
+          return a.frente.localeCompare(b.frente);
+        }
         return a.orden - b.orden;
       });
-  }, [items, activeTipo, frenteFilter, searchTerm]);
+  }, [groupScopedItems, activeTipo, frenteFilter, searchTerm]);
 
   const activeStats = useMemo(() => {
-    const ofTipo = items.filter((it) => it.tipo === activeTipo);
+    const ofTipo = groupScopedItems.filter((it) => it.tipo === activeTipo);
     const activeCount = ofTipo.filter((it) => it.activo).length;
     const inactiveCount = ofTipo.length - activeCount;
     return { total: ofTipo.length, activeCount, inactiveCount };
-  }, [items, activeTipo]);
+  }, [groupScopedItems, activeTipo]);
 
   if (user && user.rol !== 'ADMIN') {
     return (
@@ -225,12 +280,45 @@ export function AdminCatalogsTab({
     );
   }
 
+  const handleSelectGroup = (group: OperalogGroup) => {
+    if (!isGeneralAdmin || group === effectiveGroup) return;
+    setSelectedGroup(group);
+    setFrenteFilter('ALL_FILTER');
+    setSearchTerm('');
+    setEditingUid(null);
+    setFeedback(null);
+  };
+
+  const handleInitGroupFrentes = () => {
+    const existingTokens = new Set(
+      groupScopedItems
+        .filter((it) => it.tipo === 'FRENTE')
+        .map((it) => String(it.valor || it.frente).trim().toUpperCase()),
+    );
+    const missing = FRONT_CONFIGS.filter((f) => !existingTokens.has(f.id));
+    if (missing.length === 0) return;
+
+    const currentCount = existingTokens.size;
+    const seeded: EditableCatalogItem[] = missing.map((f, idx) => ({
+      _uid: nextUid(),
+      tipo: 'FRENTE',
+      frente: 'ALL',
+      valor: f.id,
+      orden: currentCount + idx + 1,
+      activo: true,
+      grupo: effectiveGroup,
+    }));
+    setItems((prev) => [...prev, ...seeded]);
+    setIsDirty(true);
+    setFeedback(null);
+  };
+
   const handleSelectTipoTab = (tipo: CatalogTipo) => {
     setActiveTipo(tipo);
     setFrenteFilter('ALL_FILTER');
     setSearchTerm('');
     setNewFrente(TIPO_CONFIGS[tipo].defaultFrente);
-    setNewValor('');
+    setNewValor(tipo === 'FRENTE' ? FRONT_CONFIGS[0].id : '');
     setEditingUid(null);
     setFeedback(null);
   };
@@ -245,7 +333,8 @@ export function AdminCatalogsTab({
   const handleAddItem = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = newValor.trim();
-    const targetFrente = activeTipo === 'HORARIO' ? 'ALL' : newFrente;
+    const targetFrente =
+      activeTipo === 'HORARIO' || activeTipo === 'FRENTE' ? 'ALL' : newFrente;
 
     if (!trimmed) {
       setFeedback({
@@ -255,10 +344,10 @@ export function AdminCatalogsTab({
       return;
     }
 
-    const exists = items.some(
+    const exists = groupScopedItems.some(
       (it) =>
         it.tipo === activeTipo &&
-        it.frente === targetFrente &&
+        (activeTipo === 'FRENTE' || it.frente === targetFrente) &&
         it.valor.toLowerCase() === trimmed.toLowerCase(),
     );
     if (exists) {
@@ -269,8 +358,10 @@ export function AdminCatalogsTab({
       return;
     }
 
-    const sameGroup = items.filter(
-      (it) => it.tipo === activeTipo && it.frente === targetFrente,
+    const sameGroup = groupScopedItems.filter(
+      (it) =>
+        it.tipo === activeTipo &&
+        (activeTipo === 'FRENTE' || it.frente === targetFrente),
     );
     const maxOrden = sameGroup.reduce((max, it) => Math.max(max, it.orden), 0);
 
@@ -278,13 +369,16 @@ export function AdminCatalogsTab({
       _uid: nextUid(),
       tipo: activeTipo,
       frente: targetFrente,
-      valor: trimmed,
+      valor: activeTipo === 'FRENTE' ? trimmed.toUpperCase() : trimmed,
       orden: maxOrden + 1,
       activo: true,
+      grupo: activeTipo === 'HORARIO' && isGeneralAdmin ? 'ALL' : effectiveGroup,
     };
 
     setItems((prev) => [...prev, newItem]);
-    setNewValor('');
+    if (activeTipo !== 'FRENTE') {
+      setNewValor('');
+    }
     setIsDirty(true);
     setFeedback(null);
   };
@@ -365,7 +459,8 @@ export function AdminCatalogsTab({
   };
 
   const handleMoveWithinGroup = (item: EditableCatalogItem, direction: -1 | 1) => {
-    const group = groupedOrderMap.get(item.frente) ?? [];
+    const groupKey = item.tipo === 'FRENTE' ? 'ALL' : item.frente;
+    const group = groupedOrderMap.get(groupKey) ?? [];
     const idxInGroup = group.findIndex((g) => g._uid === item._uid);
     const swapIdx = idxInGroup + direction;
     if (idxInGroup < 0 || swapIdx < 0 || swapIdx >= group.length) return;
@@ -429,11 +524,14 @@ export function AdminCatalogsTab({
     setIsSaving(true);
     setFeedback(null);
     try {
-      const plainItems = toPlainCatalogItems(items);
+      const plainGroupItems = toPlainCatalogItems(
+        items.filter((it) => itemMatchesGroup(it, effectiveGroup)),
+      );
       const result = await saveCatalog({
-        items: plainItems,
+        items: plainGroupItems,
         rol: user?.rol ?? 'ADMIN',
         usuario: user?.usuario ?? '',
+        grupo: effectiveGroup,
       });
       onCatalogSaved(result.items);
       setItems(toEditableItems(result.items));
@@ -441,7 +539,7 @@ export function AdminCatalogsTab({
       setEditingUid(null);
       setFeedback({
         type: 'success',
-        message: `Catálogos guardados en Google Sheets (${result.items.length} ítems).`,
+        message: `Catálogos (${effectiveGroup}) guardados en Google Sheets (${result.items.length} ítems).`,
       });
     } catch (err) {
       setFeedback({
@@ -469,7 +567,51 @@ export function AdminCatalogsTab({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {isGeneralAdmin ? (
+            <div
+              role="group"
+              aria-label="Seleccionar grupo de catálogo"
+              className="inline-flex items-center rounded-lg border p-0.5"
+              style={{
+                backgroundColor: 'var(--pluz-bg)',
+                borderColor: 'var(--pluz-border)',
+              }}
+            >
+              {OPERALOG_GROUPS.map((g) => {
+                const active = effectiveGroup === g.id;
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => handleSelectGroup(g.id)}
+                    className="tactile-btn px-2.5 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors"
+                    style={{
+                      backgroundColor: active ? 'var(--pluz-primary)' : 'transparent',
+                      color: active ? '#FFFFFF' : 'var(--pluz-muted)',
+                    }}
+                    title={g.label}
+                  >
+                    {g.shortLabel}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <span
+              className="inline-flex items-center rounded-lg border px-2.5 py-1.5 text-xs font-semibold"
+              style={{
+                backgroundColor: 'var(--pluz-bg)',
+                borderColor: 'var(--pluz-border)',
+                color: 'var(--pluz-ink)',
+              }}
+            >
+              Grupo:{' '}
+              {OPERALOG_GROUPS.find((g) => g.id === effectiveGroup)?.label ?? effectiveGroup}
+            </span>
+          )}
+
           <button
             type="button"
             onClick={handleRefresh}
@@ -589,7 +731,7 @@ export function AdminCatalogsTab({
               const cfg = TIPO_CONFIGS[tipoId];
               const Icon = cfg.icon;
               const isActive = activeTipo === tipoId;
-              const count = items.filter((it) => it.tipo === tipoId).length;
+              const count = groupScopedItems.filter((it) => it.tipo === tipoId).length;
               return (
                 <button
                   key={tipoId}
@@ -650,89 +792,146 @@ export function AdminCatalogsTab({
             <span>{activeConfig.description}</span>
           </div>
 
-          <form onSubmit={handleAddItem} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-            {activeTipo !== 'HORARIO' ? (
-              <div className="sm:col-span-4">
+          {activeTipo === 'FRENTE' ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <form onSubmit={handleAddItem} className="flex flex-wrap items-end gap-3 flex-1">
+                <div className="min-w-[220px] flex-1 max-w-xs">
+                  <label
+                    htmlFor="cat-valor"
+                    className="block text-xs font-semibold mb-1"
+                    style={{ color: 'var(--pluz-ink)' }}
+                  >
+                    Agregar frente individual
+                  </label>
+                  <select
+                    id="cat-valor"
+                    value={newValor}
+                    onChange={(e) => setNewValor(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-lg border outline-none"
+                    style={{
+                      borderColor: 'var(--pluz-border)',
+                      backgroundColor: 'var(--pluz-surface)',
+                      color: 'var(--pluz-ink)',
+                    }}
+                  >
+                    {activeConfig.frenteOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="submit"
+                  className="tactile-btn inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer"
+                  style={{ backgroundColor: 'var(--pluz-success)' }}
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Agregar</span>
+                </button>
+              </form>
+
+              {activeStats.total < FRONT_CONFIGS.length && (
+                <button
+                  type="button"
+                  onClick={handleInitGroupFrentes}
+                  className="tactile-btn inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border text-xs font-semibold cursor-pointer"
+                  style={{
+                    borderColor: 'var(--pluz-primary)',
+                    color: 'var(--pluz-primary)',
+                    backgroundColor: 'rgba(60, 90, 159, 0.06)',
+                  }}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Inicializar frentes del grupo ({effectiveGroup})</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <form onSubmit={handleAddItem} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+              {activeTipo !== 'HORARIO' ? (
+                <div className="sm:col-span-4">
+                  <label
+                    htmlFor="cat-frente"
+                    className="block text-xs font-semibold mb-1"
+                    style={{ color: 'var(--pluz-ink)' }}
+                  >
+                    Frente destino
+                  </label>
+                  <select
+                    id="cat-frente"
+                    value={newFrente}
+                    onChange={(e) => setNewFrente(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-lg border outline-none"
+                    style={{
+                      borderColor: 'var(--pluz-border)',
+                      backgroundColor: 'var(--pluz-surface)',
+                      color: 'var(--pluz-ink)',
+                    }}
+                  >
+                    {activeConfig.frenteOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="sm:col-span-3">
+                  <span
+                    className="block text-xs font-semibold mb-1"
+                    style={{ color: 'var(--pluz-muted)' }}
+                  >
+                    Alcance
+                  </span>
+                  <div
+                    className="px-3 py-2 text-xs font-semibold rounded-lg border"
+                    style={{
+                      borderColor: 'var(--pluz-border)',
+                      backgroundColor: 'var(--pluz-bg)',
+                      color: 'var(--pluz-muted)',
+                    }}
+                  >
+                    Todos los frentes (ALL)
+                  </div>
+                </div>
+              )}
+
+              <div className={activeTipo !== 'HORARIO' ? 'sm:col-span-6' : 'sm:col-span-7'}>
                 <label
-                  htmlFor="cat-frente"
+                  htmlFor="cat-valor"
                   className="block text-xs font-semibold mb-1"
                   style={{ color: 'var(--pluz-ink)' }}
                 >
-                  Frente destino
+                  Nuevo {activeConfig.singular}
                 </label>
-                <select
-                  id="cat-frente"
-                  value={newFrente}
-                  onChange={(e) => setNewFrente(e.target.value)}
+                <input
+                  id="cat-valor"
+                  type="text"
+                  value={newValor}
+                  onChange={(e) => setNewValor(e.target.value)}
+                  placeholder={activeConfig.placeholder}
                   className="w-full px-3 py-2 text-sm rounded-lg border outline-none"
                   style={{
                     borderColor: 'var(--pluz-border)',
                     backgroundColor: 'var(--pluz-surface)',
                     color: 'var(--pluz-ink)',
                   }}
-                >
-                  {activeConfig.frenteOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
-            ) : (
-              <div className="sm:col-span-3">
-                <span
-                  className="block text-xs font-semibold mb-1"
-                  style={{ color: 'var(--pluz-muted)' }}
+
+              <div className="sm:col-span-2">
+                <button
+                  type="submit"
+                  className="tactile-btn w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer"
+                  style={{ backgroundColor: 'var(--pluz-success)' }}
                 >
-                  Alcance
-                </span>
-                <div
-                  className="px-3 py-2 text-xs font-semibold rounded-lg border"
-                  style={{
-                    borderColor: 'var(--pluz-border)',
-                    backgroundColor: 'var(--pluz-bg)',
-                    color: 'var(--pluz-muted)',
-                  }}
-                >
-                  Todos los frentes (ALL)
-                </div>
+                  <Plus className="w-4 h-4" />
+                  <span>Agregar</span>
+                </button>
               </div>
-            )}
-
-            <div className={activeTipo !== 'HORARIO' ? 'sm:col-span-6' : 'sm:col-span-7'}>
-              <label
-                htmlFor="cat-valor"
-                className="block text-xs font-semibold mb-1"
-                style={{ color: 'var(--pluz-ink)' }}
-              >
-                Nuevo {activeConfig.singular}
-              </label>
-              <input
-                id="cat-valor"
-                type="text"
-                value={newValor}
-                onChange={(e) => setNewValor(e.target.value)}
-                placeholder={activeConfig.placeholder}
-                className="w-full px-3 py-2 text-sm rounded-lg border outline-none"
-                style={{
-                  borderColor: 'var(--pluz-border)',
-                  backgroundColor: 'var(--pluz-surface)',
-                  color: 'var(--pluz-ink)',
-                }}
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <button
-                type="submit"
-                className="tactile-btn w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white cursor-pointer"
-                style={{ backgroundColor: 'var(--pluz-success)' }}
-              >
-                <Plus className="w-4 h-4" />
-                <span>Agregar</span>
-              </button>
-            </div>
-          </form>
+            </form>
+          )}
         </div>
 
         {/* Toolbar: Frente Filter Pills + Search */}
@@ -839,7 +1038,8 @@ export function AdminCatalogsTab({
                 </tr>
               ) : (
                 visibleItems.map((item) => {
-                  const group = groupedOrderMap.get(item.frente) ?? [];
+                  const groupKey = item.tipo === 'FRENTE' ? 'ALL' : item.frente;
+                  const group = groupedOrderMap.get(groupKey) ?? [];
                   const idxInGroup = group.findIndex((g) => g._uid === item._uid);
                   const isFirstInGroup = idxInGroup <= 0;
                   const isLastInGroup = idxInGroup === -1 || idxInGroup >= group.length - 1;

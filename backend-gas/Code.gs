@@ -30,6 +30,42 @@ function normalizeDateValue(val) {
   return val !== undefined && val !== null ? String(val).trim() : '';
 }
 
+function normalizeGroup(raw, fallback) {
+  const upper = String(raw || '').trim().toUpperCase();
+  if (upper === 'BT' || upper === 'AP' || upper === 'MT' || upper === 'ALL') {
+    return upper;
+  }
+  return fallback || 'BT';
+}
+
+function matchesGroup(itemGrupo, targetGrupo) {
+  if (!targetGrupo || targetGrupo === 'ALL') return true;
+  const normalizedItem = normalizeGroup(itemGrupo, 'BT');
+  return normalizedItem === 'ALL' || normalizedItem === targetGrupo;
+}
+
+function buildContrataGroupMap(users) {
+  const map = {};
+  users.forEach(u => {
+    if (u.rol === 'CONTRATA' && u.contratista) {
+      map[u.contratista] = normalizeGroup(u.grupo, 'BT');
+    }
+  });
+  return map;
+}
+
+function mapCatalogRow(c) {
+  const tipo = String(c.tipo || '').trim().toUpperCase();
+  return {
+    tipo: tipo,
+    frente: c.frente,
+    valor: c.valor,
+    orden: Number(c.orden) || 1,
+    activo: String(c.activo).toUpperCase() === 'TRUE',
+    grupo: normalizeGroup(c.grupo, tipo === 'HORARIO' ? 'ALL' : 'BT'),
+  };
+}
+
 function sheetToObjects(sheetName) {
   const sheet = getSheet(sheetName);
   const values = sheet.getDataRange().getValues();
@@ -63,30 +99,33 @@ function doGet(e) {
           rol: u.rol,
           contratista: u.contratista,
           nombre_mostrar: u.nombre_mostrar,
+          grupo: normalizeGroup(u.grupo, u.rol === 'ADMIN' ? 'ALL' : 'BT'),
         }));
       return jsonResponse({ ok: true, users });
     }
 
     if (action === 'getCatalogs') {
-      const allCatalogs = sheetToObjects(SHEETS.CATALOGOS).map(c => ({
-        tipo: c.tipo,
-        frente: c.frente,
-        valor: c.valor,
-        orden: Number(c.orden) || 1,
-        activo: String(c.activo).toUpperCase() === 'TRUE',
-      }));
-      const catalogs = found.rol === 'ADMIN'
-        ? allCatalogs
-        : allCatalogs.filter(c => c.activo);
+      const targetGrupo = e.parameter.grupo ? normalizeGroup(e.parameter.grupo, 'ALL') : 'ALL';
+      const catalogs = sheetToObjects(SHEETS.CATALOGOS)
+        .map(mapCatalogRow)
+        .filter(c => c.activo && matchesGroup(c.grupo, targetGrupo));
       return jsonResponse({ ok: true, catalogs });
     }
 
     if (action === 'getContratas') {
-      const users = sheetToObjects(SHEETS.USUARIOS);
-      const contratas = [...new Set(
-        users.filter(u => u.rol === 'CONTRATA' && String(u.activo).toUpperCase() === 'TRUE').map(u => u.contratista)
-      )];
-      return jsonResponse({ ok: true, contratas });
+      const targetGrupo = e.parameter.grupo ? normalizeGroup(e.parameter.grupo, 'ALL') : 'ALL';
+      const users = sheetToObjects(SHEETS.USUARIOS)
+        .filter(u => u.rol === 'CONTRATA' && String(u.activo).toUpperCase() === 'TRUE');
+      const contrataGroupMap = buildContrataGroupMap(users);
+      const allMeta = Object.keys(contrataGroupMap).map(nombre => ({
+        nombre: nombre,
+        grupo: contrataGroupMap[nombre],
+      }));
+      const contratasMeta = targetGrupo === 'ALL'
+        ? allMeta
+        : allMeta.filter(m => m.grupo === targetGrupo);
+      const contratas = contratasMeta.map(m => m.nombre);
+      return jsonResponse({ ok: true, contratas, contratasMeta });
     }
 
     if (action === 'login') {
@@ -99,19 +138,25 @@ function doGet(e) {
       if (!found) {
         return jsonResponse({ ok: false, error: 'Credenciales inválidas o usuario inactivo.' });
       }
-      const allCatalogs = sheetToObjects(SHEETS.CATALOGOS).map(c => ({
-        tipo: c.tipo,
-        frente: c.frente,
-        valor: c.valor,
-        orden: Number(c.orden) || 1,
-        activo: String(c.activo).toUpperCase() === 'TRUE',
-      }));
+      const userGrupo = normalizeGroup(found.grupo, found.rol === 'ADMIN' ? 'ALL' : 'BT');
+      const allCatalogs = sheetToObjects(SHEETS.CATALOGOS).map(mapCatalogRow);
       const catalogs = found.rol === 'ADMIN'
-        ? allCatalogs
-        : allCatalogs.filter(c => c.activo);
-      const contratas = [...new Set(
-        users.filter(u => u.rol === 'CONTRATA' && u.activo.toUpperCase() === 'TRUE').map(u => u.contratista)
-      )];
+        ? (userGrupo === 'ALL' ? allCatalogs : allCatalogs.filter(c => matchesGroup(c.grupo, userGrupo)))
+        : allCatalogs.filter(c => c.activo && matchesGroup(c.grupo, userGrupo));
+
+      const activeContratas = users.filter(
+        u => u.rol === 'CONTRATA' && String(u.activo).toUpperCase() === 'TRUE'
+      );
+      const contrataGroupMap = buildContrataGroupMap(activeContratas);
+      const allMeta = Object.keys(contrataGroupMap).map(nombre => ({
+        nombre: nombre,
+        grupo: contrataGroupMap[nombre],
+      }));
+      const contratasMeta = userGrupo === 'ALL'
+        ? allMeta
+        : allMeta.filter(m => m.grupo === userGrupo);
+      const contratas = contratasMeta.map(m => m.nombre);
+
       return jsonResponse({
         ok: true,
         user: {
@@ -119,20 +164,20 @@ function doGet(e) {
           rol: found.rol,
           contratista: found.contratista,
           nombre_mostrar: found.nombre_mostrar,
+          grupo: userGrupo,
+          ver_historico: String(found.ver_historico || '').trim().toUpperCase() === 'TRUE',
         },
         catalogs,
         contratas,
+        contratasMeta,
       });
     }
 
     if (action === 'getAllCatalogs') {
-      const catalogs = sheetToObjects(SHEETS.CATALOGOS).map(c => ({
-        tipo: c.tipo,
-        frente: c.frente,
-        valor: c.valor,
-        orden: Number(c.orden) || 1,
-        activo: String(c.activo).toUpperCase() === 'TRUE',
-      }));
+      const targetGrupo = e.parameter.grupo ? normalizeGroup(e.parameter.grupo, 'ALL') : 'ALL';
+      const catalogs = sheetToObjects(SHEETS.CATALOGOS)
+        .map(mapCatalogRow)
+        .filter(c => matchesGroup(c.grupo, targetGrupo));
       return jsonResponse({ ok: true, catalogs });
     }
 
@@ -140,9 +185,15 @@ function doGet(e) {
       const fecha = (e.parameter.fecha || '').trim();
       const contratista = (e.parameter.contratista || '').trim();
       const rol = (e.parameter.rol || 'CONTRATA').trim();
-      const allRows = sheetToObjects(SHEETS.TURNOS);
+      const targetGrupo = e.parameter.grupo ? normalizeGroup(e.parameter.grupo, 'ALL') : 'ALL';
+      const contrataGroupMap = buildContrataGroupMap(sheetToObjects(SHEETS.USUARIOS));
+      const allRows = sheetToObjects(SHEETS.TURNOS).map(r => ({
+        ...r,
+        grupo: normalizeGroup(r.grupo, contrataGroupMap[r.contratista] || 'BT'),
+      }));
       const filtered = allRows.filter(r => {
         if (r.fecha !== fecha) return false;
+        if (targetGrupo !== 'ALL' && r.grupo !== targetGrupo) return false;
         if (rol === 'ADMIN' && (contratista === 'ALL' || !contratista)) return true;
         return r.contratista === contratista;
       });
@@ -154,11 +205,17 @@ function doGet(e) {
       const fechaFin = (e.parameter.fechaFin || '').trim();
       const contratista = (e.parameter.contratista || '').trim();
       const rol = (e.parameter.rol || 'CONTRATA').trim();
-      const allRows = sheetToObjects(SHEETS.TURNOS);
+      const targetGrupo = e.parameter.grupo ? normalizeGroup(e.parameter.grupo, 'ALL') : 'ALL';
+      const contrataGroupMap = buildContrataGroupMap(sheetToObjects(SHEETS.USUARIOS));
+      const allRows = sheetToObjects(SHEETS.TURNOS).map(r => ({
+        ...r,
+        grupo: normalizeGroup(r.grupo, contrataGroupMap[r.contratista] || 'BT'),
+      }));
       const filtered = allRows.filter(r => {
         if (!r.fecha) return false;
         if (fechaInicio && r.fecha < fechaInicio) return false;
         if (fechaFin && r.fecha > fechaFin) return false;
+        if (targetGrupo !== 'ALL' && r.grupo !== targetGrupo) return false;
         if (rol === 'ADMIN' && (contratista === 'ALL' || !contratista)) return true;
         return r.contratista === contratista;
       });
@@ -215,29 +272,56 @@ function doPost(e) {
 
       const sheet = getSheet(SHEETS.TURNOS);
       const data = sheet.getDataRange().getValues();
-      const headers = data[0];
+      const rawHeaders = data.length > 0
+        ? data[0].map(h => String(h || '').trim())
+        : [];
+      const headers = rawHeaders.length > 0
+        ? [...rawHeaders]
+        : ['id', 'fecha', 'contratista', 'frente', 'nombres', 'usuario_ssam', 'celular', 'actividad', 'skill', 'horario', 'updated_at', 'updated_by'];
+      if (headers.indexOf('grupo') === -1) {
+        headers.push('grupo');
+      }
+      const grupoColIdx = headers.indexOf('grupo');
+
+      const contrataGroupMap = buildContrataGroupMap(sheetToObjects(SHEETS.USUARIOS));
+      const defaultTurnGrupo = normalizeGroup(body.grupo, contrataGroupMap[contratista] || 'BT');
       const nowIso = new Date().toISOString();
 
-      const keptRows = data.slice(1).filter(r => {
-        const rowFecha = normalizeDateValue(r[1]);
-        const rowContrata = String(r[2]).trim();
-        return !(rowFecha === fecha && rowContrata === contratista);
-      });
+      const keptRows = data.slice(1)
+        .filter(r => {
+          const rowFecha = normalizeDateValue(r[1]);
+          const rowContrata = String(r[2]).trim();
+          return !(rowFecha === fecha && rowContrata === contratista);
+        })
+        .map(r => {
+          const normalized = r.slice(0, headers.length);
+          while (normalized.length < headers.length) {
+            normalized.push('');
+          }
+          return normalized;
+        });
 
-      const newRows = rows.map((item, idx) => [
-        item.id || `${fecha}_${contratista}_${item.frente}_${idx + 1}`,
-        fecha,
-        contratista,
-        item.frente || '',
-        item.nombres || '',
-        item.usuario_ssam || '',
-        item.celular || '',
-        item.actividad || '',
-        item.skill || '',
-        item.horario || '',
-        nowIso,
-        usuario || '',
-      ]);
+      const newRows = rows.map((item, idx) => {
+        const baseRow = [
+          item.id || `${fecha}_${contratista}_${item.frente}_${idx + 1}`,
+          fecha,
+          contratista,
+          item.frente || '',
+          item.nombres || '',
+          item.usuario_ssam || '',
+          item.celular || '',
+          item.actividad || '',
+          item.skill || '',
+          item.horario || '',
+          nowIso,
+          usuario || '',
+        ];
+        while (baseRow.length < headers.length) {
+          baseRow.push('');
+        }
+        baseRow[grupoColIdx] = normalizeGroup(item.grupo, defaultTurnGrupo);
+        return baseRow;
+      });
 
       const finalData = [headers, ...keptRows, ...newRows];
       sheet.clearContents();
@@ -256,28 +340,40 @@ function doPost(e) {
         return jsonResponse({ ok: false, error: 'Solo ADMIN puede modificar catálogos.' });
       }
       const sheet = getSheet(SHEETS.CATALOGOS);
-      const rawHeaders = sheet.getLastRow() >= 1
-        ? sheet.getRange(1, 1, 1, 5).getValues()[0].map(h => String(h || '').trim())
-        : [];
-      const defaultHeaders = ['tipo', 'frente', 'valor', 'orden', 'activo'];
-      const headers = defaultHeaders.map((def, idx) => rawHeaders[idx] || def);
+      const headers = ['tipo', 'frente', 'valor', 'orden', 'activo', 'grupo'];
+      const targetGrupoRaw = String(body.grupo || '').trim().toUpperCase();
+      const isScopedGroup = targetGrupoRaw === 'BT' || targetGrupoRaw === 'AP' || targetGrupoRaw === 'MT';
 
       const sanitizedItems = (Array.isArray(body.items) ? body.items : [])
-        .map((c, idx) => ({
-          tipo: String(c.tipo || '').trim().toUpperCase(),
-          frente: String(c.frente || 'ALL').trim().toUpperCase(),
-          valor: String(c.valor || '').trim(),
-          orden: Number(c.orden) || (idx + 1),
-          activo: c.activo === true || String(c.activo).toUpperCase() === 'TRUE',
-        }))
+        .map((c, idx) => {
+          const tipo = String(c.tipo || '').trim().toUpperCase();
+          const defaultItemGrupo = isScopedGroup ? targetGrupoRaw : (tipo === 'HORARIO' ? 'ALL' : 'BT');
+          return {
+            tipo: tipo,
+            frente: String(c.frente || 'ALL').trim().toUpperCase(),
+            valor: String(c.valor || '').trim(),
+            orden: Number(c.orden) || (idx + 1),
+            activo: c.activo === true || String(c.activo).toUpperCase() === 'TRUE',
+            grupo: normalizeGroup(c.grupo, defaultItemGrupo),
+          };
+        })
         .filter(c => c.tipo && c.valor);
 
-      const newRows = sanitizedItems.map(c => [
+      let finalItems = sanitizedItems;
+      if (isScopedGroup) {
+        const existingOtherGroups = sheetToObjects(SHEETS.CATALOGOS)
+          .map(mapCatalogRow)
+          .filter(c => c.tipo && c.valor && c.grupo !== targetGrupoRaw);
+        finalItems = [...existingOtherGroups, ...sanitizedItems];
+      }
+
+      const newRows = finalItems.map(c => [
         c.tipo,
         c.frente,
         c.valor,
         c.orden,
         c.activo ? 'TRUE' : 'FALSE',
+        c.grupo,
       ]);
 
       sheet.clearContents();
@@ -286,6 +382,7 @@ function doPost(e) {
         sheet.getRange(2, 1, newRows.length, 1).setNumberFormat('@');
         sheet.getRange(2, 2, newRows.length, 1).setNumberFormat('@');
         sheet.getRange(2, 3, newRows.length, 1).setNumberFormat('@');
+        sheet.getRange(2, 6, newRows.length, 1).setNumberFormat('@');
         sheet.getRange(2, 1, newRows.length, headers.length).setValues(newRows);
       }
 

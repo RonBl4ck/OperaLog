@@ -63,7 +63,7 @@ describe('AdminCatalogsTab', () => {
 
     // Edit inline
     fireEvent.click(screen.getByRole('button', { name: 'Editar 19:00 - 07:00' }));
-    const editInput = screen.getByLabelText('Editar 19:00 - 07:00');
+    const editInput = screen.getByRole('textbox', { name: 'Editar 19:00 - 07:00' });
     fireEvent.change(editInput, { target: { value: '20:00 - 08:00' } });
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar edición' }));
 
@@ -106,5 +106,90 @@ describe('AdminCatalogsTab', () => {
     // Discard changes
     fireEvent.click(screen.getByRole('button', { name: /Descartar/i }));
     expect(screen.queryByText(/Tienes cambios pendientes en memoria/i)).toBeNull();
+  });
+
+  it('allows ALL admin to switch between BT, AP, MT and manage Frentes / Bloques', async () => {
+    const groupedCatalog: CatalogItem[] = [
+      { tipo: 'HORARIO', frente: 'ALL', valor: '06:00 - 22:00', orden: 1, activo: true, grupo: 'ALL' },
+      { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'TOMA BT', orden: 1, activo: true, grupo: 'BT' },
+      { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'LUMINARIA LED', orden: 1, activo: true, grupo: 'AP' },
+      { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'SUBESTACION MT', orden: 1, activo: true, grupo: 'MT' },
+    ];
+
+    vi.mocked(gasClient.saveCatalog).mockImplementation(async (payload) => {
+      const items = Array.isArray(payload) ? payload : payload.items;
+      return { ok: true, items };
+    });
+
+    render(
+      <AdminCatalogsTab
+        catalog={groupedCatalog}
+        onCatalogSaved={vi.fn()}
+        user={{ ...ADMIN_USER, grupo: 'ALL' }}
+      />,
+    );
+
+    // Group selector buttons BT, AP, MT are visible
+    const btBtn = screen.getByRole('button', { name: 'BT' });
+    const apBtn = screen.getByRole('button', { name: 'AP' });
+    const mtBtn = screen.getByRole('button', { name: 'MT' });
+    expect(btBtn).toBeTruthy();
+    expect(apBtn).toBeTruthy();
+    expect(mtBtn).toBeTruthy();
+
+    // Switch to Skills tab -> defaults to BT
+    fireEvent.click(screen.getByRole('button', { name: /Skills/i }));
+    expect(screen.getByText('TOMA BT')).toBeTruthy();
+    expect(screen.queryByText('LUMINARIA LED')).toBeNull();
+
+    // Switch to AP -> shows AP skills
+    fireEvent.click(apBtn);
+    expect(screen.getByText('LUMINARIA LED')).toBeTruthy();
+    expect(screen.queryByText('TOMA BT')).toBeNull();
+
+    // Switch to MT -> shows MT skills
+    fireEvent.click(mtBtn);
+    expect(screen.getByText('SUBESTACION MT')).toBeTruthy();
+    expect(screen.queryByText('LUMINARIA LED')).toBeNull();
+
+    // Switch to Frentes / Bloques tab and initialize group fronts
+    fireEvent.click(screen.getByRole('button', { name: /Frentes \/ Bloques/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Inicializar frentes del grupo \(MT\)/i }));
+
+    expect(screen.getByText('COORDINADORES')).toBeTruthy();
+    expect(screen.getByText('RECLAMOS')).toBeTruthy();
+
+    // Save should pass grupo: 'MT'
+    fireEvent.click(screen.getByRole('button', { name: /Guardar en Sheets/i }));
+    await waitFor(() => {
+      expect(gasClient.saveCatalog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          grupo: 'MT',
+          rol: 'ADMIN',
+        }),
+      );
+    });
+  });
+
+  it('locks group-scoped AP admin to AP with a read-only badge', () => {
+    const groupedCatalog: CatalogItem[] = [
+      { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'TOMA BT', orden: 1, activo: true, grupo: 'BT' },
+      { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'LUMINARIA LED', orden: 1, activo: true, grupo: 'AP' },
+    ];
+
+    render(
+      <AdminCatalogsTab
+        catalog={groupedCatalog}
+        onCatalogSaved={vi.fn()}
+        user={{ ...ADMIN_USER, usuario: 'admin.ap', grupo: 'AP' }}
+      />,
+    );
+
+    expect(screen.getByText(/Grupo: Alumbrado Público \(AP\)/i)).toBeTruthy();
+    expect(screen.queryByRole('group', { name: 'Seleccionar grupo de catálogo' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Skills/i }));
+    expect(screen.getByText('LUMINARIA LED')).toBeTruthy();
+    expect(screen.queryByText('TOMA BT')).toBeNull();
   });
 });

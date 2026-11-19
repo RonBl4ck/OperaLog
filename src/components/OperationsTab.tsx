@@ -13,10 +13,15 @@ import {
 } from 'lucide-react';
 import {
   CatalogItem,
+  ContrataMeta,
   FRONT_CONFIGS,
   FrontType,
+  getActiveFrontConfigs,
+  matchesGroupCatalog,
+  normalizeGroup,
   ToastMessage,
   TurnRow,
+  UserGroupScope,
   UserSession,
 } from '../types/operalog';
 import {
@@ -36,6 +41,7 @@ interface OperationsTabProps {
   user: UserSession;
   catalogs: CatalogItem[];
   contratas?: string[];
+  contratasMeta?: ContrataMeta[];
   initialFecha?: string;
   onToast: (toast: Omit<ToastMessage, 'id'>) => void;
   onRowsChange?: (rows: TurnRow[], fecha: string) => void;
@@ -51,6 +57,7 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
   user,
   catalogs,
   contratas = ['ALFA', 'BETA'],
+  contratasMeta,
   initialFecha,
   onToast,
   onRowsChange,
@@ -79,6 +86,26 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
   const [saving, setSaving] = useState<boolean>(false);
   const generalFileInputRef = useRef<HTMLInputElement | null>(null);
   const isPastDate = isPastIsoDate(fecha);
+
+  const activeGroup: UserGroupScope = useMemo(() => {
+    if (!isAdmin) {
+      return normalizeGroup(user.grupo, 'BT');
+    }
+    return (
+      contratasMeta?.find((c) => c.nombre === contratista)?.grupo ??
+      normalizeGroup(user.grupo, 'BT')
+    );
+  }, [isAdmin, user.grupo, contratasMeta, contratista]);
+
+  const groupCatalogs = useMemo(
+    () => catalogs.filter((c) => matchesGroupCatalog(c.grupo, activeGroup)),
+    [catalogs, activeGroup],
+  );
+
+  const activeFronts = useMemo(
+    () => getActiveFrontConfigs(catalogs, activeGroup),
+    [catalogs, activeGroup],
+  );
 
   // Keep non-admin locked to their contratista
   useEffect(() => {
@@ -167,7 +194,8 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
       const parsedByFront = parseGeneralExcelWorkbook(
         buffer,
         { fecha, contratista },
-        catalogs,
+        groupCatalogs,
+        activeGroup,
       );
       const updatedFrontIds = Object.keys(parsedByFront) as FrontType[];
 
@@ -301,6 +329,7 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
         contratista,
         rows: normalized,
         usuario: user.usuario,
+        grupo: activeGroup === 'ALL' ? undefined : activeGroup,
       });
 
       setRows(normalized);
@@ -387,7 +416,7 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
 
           <button
             type="button"
-            onClick={() => void downloadGeneralExcelTemplate(catalogs)}
+            onClick={() => void downloadGeneralExcelTemplate(groupCatalogs, activeGroup)}
             disabled={loadingTurn || saving}
             className="tactile-btn inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             title="Descargar plantilla Excel general (Despachadores, Reclamos, Teko y Reparaciones con desplegables)"
@@ -494,14 +523,14 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
         </div>
       ) : (
         <div className="space-y-4">
-          {FRONT_CONFIGS.map((front) => (
+          {activeFronts.map((front) => (
             <FrontGridSection
               key={front.id}
               front={front}
               rows={rowsByFront.get(front.id) ?? []}
               fecha={fecha}
               contratista={contratista}
-              catalogs={catalogs}
+              catalogs={groupCatalogs}
               readOnly={isPastDate}
               onChangeRows={handleFrontRowsChange}
               onPasteSuccess={(count, frontLabel) =>

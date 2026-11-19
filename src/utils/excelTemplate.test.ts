@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
-import { FRONT_CONFIGS, type CatalogItem, type FrontConfig } from '../types/operalog';
 import {
+  FRONT_CONFIGS,
+  type CatalogItem,
+  type FrontConfig,
+  type FrontType,
+  type OperalogGroup,
+  type TurnRow,
+} from '../types/operalog';
+import {
+  buildAdminTurnsExcelWorkbook,
   buildExcelTemplateWorkbook,
   buildGeneralExcelTemplateWorkbook,
   getTemplateHeaders,
@@ -126,5 +134,137 @@ describe('excelTemplate', () => {
     // Also ensure SheetJS compatibility with the generated buffer
     const xlsxWb = XLSX.read(buffer, { type: 'array' });
     expect(xlsxWb.SheetNames).toContain('Catalogos');
+  });
+
+  it('filters general template sheets and catalog dropdowns by group', async () => {
+    const groupedCatalogs: CatalogItem[] = [
+      { tipo: 'HORARIO', frente: 'ALL', valor: '07:00 - 15:00', orden: 1, activo: true, grupo: 'ALL' },
+      { tipo: 'FRENTE', frente: 'ALL', valor: 'RECLAMOS', orden: 1, activo: true, grupo: 'AP' },
+      { tipo: 'FRENTE', frente: 'ALL', valor: 'REPARACIONES', orden: 2, activo: true, grupo: 'AP' },
+      { tipo: 'FRENTE', frente: 'ALL', valor: 'TEKO', orden: 3, activo: false, grupo: 'AP' },
+      { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'LUMINARIA_AP', orden: 1, activo: true, grupo: 'AP' },
+      { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'TOMA_BT', orden: 2, activo: true, grupo: 'BT' },
+      { tipo: 'SKILL', frente: 'REPARACIONES', valor: 'POSTE_AP', orden: 1, activo: true, grupo: 'AP' },
+    ];
+
+    const wb = buildGeneralExcelTemplateWorkbook(groupedCatalogs, 'AP');
+    expect(wb.worksheets.map((ws) => ws.name)).toEqual([
+      'Reclamos',
+      'Reparaciones',
+      'Catalogos',
+    ]);
+
+    const catalogSheet = wb.getWorksheet('Catalogos')!;
+    const col1Values: string[] = [];
+    catalogSheet.getColumn(1).eachCell((cell, rowNum) => {
+      if (rowNum > 1 && cell.value) col1Values.push(String(cell.value));
+    });
+    expect(col1Values).toEqual(['LUMINARIA_AP']);
+
+    const reclamosSheet = wb.getWorksheet('Reclamos')!;
+    reclamosSheet.addRow(['Mario Luz', 'MLUZ', '911222333', 'luminaria_ap', '07:00 - 15:00']);
+    const buffer = (await wb.xlsx.writeBuffer()) as ArrayBuffer;
+
+    const parsed = parseGeneralExcelWorkbook(
+      buffer,
+      { fecha: '2026-11-18', contratista: 'LUMINA' },
+      groupedCatalogs,
+      'AP',
+    );
+    expect(Object.keys(parsed)).toEqual(['RECLAMOS']);
+    expect(parsed.RECLAMOS![0]).toMatchObject({
+      frente: 'RECLAMOS',
+      skill: 'LUMINARIA_AP',
+      horario: '07:00 - 15:00',
+    });
+  });
+
+  it('builds admin turns export workbook with 10 styled columns, frozen header, text formats, and group fallback', () => {
+    const frontLabelMap = new Map<FrontType, string>(
+      FRONT_CONFIGS.map((f) => [f.id, f.label]),
+    );
+    const contrataGroupMap = new Map<string, OperalogGroup>([
+      ['LUMINA', 'AP'],
+      ['ALFA', 'BT'],
+    ]);
+
+    const rows: TurnRow[] = [
+      {
+        id: 'r1',
+        fecha: '2026-11-18',
+        contratista: 'REDES MT',
+        grupo: 'MT',
+        frente: 'TEKO',
+        nombres: 'Juan Perez',
+        usuario_ssam: 'JPEREZ',
+        celular: '987654321',
+        actividad: 'TEKO',
+        skill: 'MT_LINEA',
+        horario: '07:00 - 16:00',
+      },
+      {
+        id: 'r2',
+        fecha: '2026-11-18',
+        contratista: 'LUMINA',
+        frente: 'RECLAMOS',
+        nombres: 'Ana Luz',
+        usuario_ssam: 'ALUZ',
+        celular: '912345678',
+        actividad: 'RECLAMISTA',
+        skill: 'AP_LUMINARIA',
+        horario: '15:00 - 23:00',
+      },
+      {
+        id: 'r3',
+        fecha: '2026-11-18',
+        contratista: 'OTRA',
+        frente: 'COORDINADORES',
+        nombres: 'Luis Gomez',
+        usuario_ssam: '',
+        celular: '900111222',
+        actividad: '',
+        skill: '',
+        horario: '07:00 - 16:00',
+      },
+    ];
+
+    const wb = buildAdminTurnsExcelWorkbook(rows, frontLabelMap, contrataGroupMap);
+    expect(wb.worksheets.map((ws) => ws.name)).toEqual(['Turnos']);
+
+    const sheet = wb.getWorksheet('Turnos')!;
+    expect(sheet.views[0]).toMatchObject({ state: 'frozen', ySplit: 1 });
+
+    const headerValues = sheet.getRow(1).values as Array<string | undefined>;
+    expect(headerValues.slice(1)).toEqual([
+      'Fecha',
+      'Grupo',
+      'Contratista',
+      'Frente',
+      'Nombres',
+      'Usuario SSAM',
+      'Celular',
+      'Actividad',
+      'Skill',
+      'Horario',
+    ]);
+
+    const headerCell = sheet.getCell('A1');
+    expect(headerCell.fill).toMatchObject({
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF3C5A9F' },
+    });
+    expect(headerCell.font).toMatchObject({ bold: true, color: { argb: 'FFFFFFFF' } });
+    expect(headerCell.border?.top?.style).toBe('thin');
+
+    expect(sheet.getColumn(1).numFmt).toBe('@');
+    expect(sheet.getColumn(7).numFmt).toBe('@');
+    expect((sheet.getColumn(1).width ?? 0) >= 10).toBe(true);
+    expect((sheet.getColumn(5).width ?? 0) >= 15).toBe(true);
+
+    expect(sheet.getRow(2).getCell(2).value).toBe('MT');
+    expect(sheet.getRow(2).getCell(4).value).toBe('Teko');
+    expect(sheet.getRow(3).getCell(2).value).toBe('AP');
+    expect(sheet.getRow(4).getCell(2).value).toBe('BT');
   });
 });

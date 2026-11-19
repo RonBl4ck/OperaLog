@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OperationsTab, clearOperationsCache } from './OperationsTab';
 import * as gasClient from '../services/gasClient';
 import { buildGeneralExcelTemplateWorkbook } from '../utils/excelTemplate';
-import type { TurnRow, UserSession } from '../types/operalog';
+import type { CatalogItem, TurnRow, UserSession } from '../types/operalog';
 
 const cobraUser: UserSession = {
   usuario: 'cobra.user',
@@ -283,5 +283,79 @@ describe('OperationsTab cache persistence across tab switches', () => {
     expect(onToast).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'success' }),
     );
+  });
+
+  it('filters active fronts and dropdown options by user grupo for AP users', async () => {
+    const apUser: UserSession = {
+      usuario: 'ap.user',
+      rol: 'CONTRATA',
+      contratista: 'AP_CONTRATA',
+      nombre_mostrar: 'AP Operador',
+      grupo: 'AP',
+    };
+
+    const groupedCatalogs: CatalogItem[] = [
+      { tipo: 'HORARIO', frente: 'ALL', valor: '07:00 - 15:00', orden: 1, activo: true, grupo: 'ALL' },
+      { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'LUMINARIA LED', orden: 1, activo: true, grupo: 'AP' },
+      { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'TOMA BT', orden: 1, activo: true, grupo: 'BT' },
+      { tipo: 'FRENTE', frente: 'ALL', valor: 'COORDINADORES', orden: 1, activo: false, grupo: 'AP' },
+      { tipo: 'FRENTE', frente: 'ALL', valor: 'SUPERVISORES CAPA', orden: 2, activo: false, grupo: 'AP' },
+      { tipo: 'FRENTE', frente: 'ALL', valor: 'LOCALIZADORES', orden: 3, activo: false, grupo: 'AP' },
+      { tipo: 'FRENTE', frente: 'ALL', valor: 'DESPACHADORES', orden: 4, activo: false, grupo: 'AP' },
+      { tipo: 'FRENTE', frente: 'ALL', valor: 'RECLAMOS', orden: 5, activo: true, grupo: 'AP' },
+      { tipo: 'FRENTE', frente: 'ALL', valor: 'TEKO', orden: 6, activo: false, grupo: 'AP' },
+      { tipo: 'FRENTE', frente: 'ALL', valor: 'REPARACIONES', orden: 7, activo: true, grupo: 'AP' },
+    ];
+
+    const apRow: TurnRow = {
+      ...sampleRow,
+      id: 'ap-rec-1',
+      contratista: 'AP_CONTRATA',
+      frente: 'RECLAMOS',
+      nombres: 'Carlos AP',
+      actividad: 'RECLAMISTA',
+      skill: 'LUMINARIA LED',
+      horario: '07:00 - 15:00',
+    };
+
+    vi.spyOn(gasClient, 'getTurn').mockResolvedValue([apRow]);
+    const saveTurnSpy = vi
+      .spyOn(gasClient, 'saveTurn')
+      .mockResolvedValue({ ok: true, savedCount: 1 });
+
+    render(
+      <OperationsTab
+        user={apUser}
+        catalogs={groupedCatalogs}
+        initialFecha={todayIso}
+        onToast={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Carlos AP')).toBeTruthy();
+    });
+
+    // Only active AP fronts (Reclamos and Reparaciones) should render
+    expect(screen.getByText('Reclamos')).toBeTruthy();
+    expect(screen.getByText('Reparaciones')).toBeTruthy();
+    expect(screen.queryByText('Coordinadores')).toBeNull();
+    expect(screen.queryByText('Teko')).toBeNull();
+    expect(screen.queryByText('Despachadores')).toBeNull();
+
+    // Skill dropdown should contain AP skill and exclude BT skill
+    expect(screen.getByRole('option', { name: 'LUMINARIA LED' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'TOMA BT' })).toBeNull();
+
+    // Saving should include grupo: 'AP'
+    fireEvent.click(screen.getByRole('button', { name: /Guardar Turno/i }));
+    await waitFor(() => {
+      expect(saveTurnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contratista: 'AP_CONTRATA',
+          grupo: 'AP',
+        }),
+      );
+    });
   });
 });
