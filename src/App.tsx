@@ -15,7 +15,7 @@ import {
   getTurnsRange,
 } from './services/gasClient';
 import {
-  normalizeGroup,
+  parseUserGroups,
   type CatalogItem,
   type ContrataMeta,
   type OperalogGroup,
@@ -68,7 +68,8 @@ export default function App() {
       const raw = sessionStorage.getItem(SESSION_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as UserSession;
-        return normalizeGroup(parsed.grupo, 'ALL');
+        const allowed = parseUserGroups(parsed.grupo, 'ALL');
+        return allowed.length === 1 ? allowed[0] : 'ALL';
       }
     } catch {
       // Ignore
@@ -178,8 +179,9 @@ export default function App() {
 
   const handleLoginSuccess = useCallback((loggedUser: UserSession) => {
     const today = getTodayIsoDate();
+    const allowed = parseUserGroups(loggedUser.grupo, loggedUser.rol === 'ADMIN' ? 'ALL' : 'BT');
     setUser(loggedUser);
-    setAdminGroupFilter(normalizeGroup(loggedUser.grupo, 'ALL'));
+    setAdminGroupFilter(allowed.length === 1 ? allowed[0] : 'ALL');
     setAdminSelectedContrata('ALL');
     setIsHistoryUnlocked(shouldUnlockHistoryByDefault(loggedUser));
     setCurrentFecha(today);
@@ -257,13 +259,21 @@ export default function App() {
     [catalogs],
   );
 
+  const allowedAdminGroups = useMemo(
+    () => parseUserGroups(user?.grupo, 'ALL'),
+    [user?.grupo],
+  );
+
   const handleAdminGroupFilterChange = useCallback(
     (nextGroup: UserGroupScope) => {
-      if (user && normalizeGroup(user.grupo, 'ALL') !== 'ALL') return;
+      if (user) {
+        if (nextGroup === 'ALL' && allowedAdminGroups.length === 1) return;
+        if (nextGroup !== 'ALL' && !allowedAdminGroups.includes(nextGroup)) return;
+      }
       setAdminGroupFilter(nextGroup);
       setAdminSelectedContrata('ALL');
     },
-    [user],
+    [user, allowedAdminGroups],
   );
 
   const contrataGroupMap = useMemo(
@@ -272,18 +282,28 @@ export default function App() {
   );
 
   const scopedContratas = useMemo(() => {
-    if (adminGroupFilter === 'ALL') return contratas;
+    if (adminGroupFilter === 'ALL') {
+      if (allowedAdminGroups.length === 3) return contratas;
+      return contratas.filter((c) =>
+        allowedAdminGroups.includes(contrataGroupMap.get(c) ?? 'BT'),
+      );
+    }
     return contratas.filter((c) => (contrataGroupMap.get(c) ?? 'BT') === adminGroupFilter);
-  }, [contratas, contrataGroupMap, adminGroupFilter]);
+  }, [contratas, contrataGroupMap, adminGroupFilter, allowedAdminGroups]);
 
   const filterRowsByGroup = useCallback(
     (rows: TurnRow[]): TurnRow[] => {
-      if (adminGroupFilter === 'ALL') return rows;
+      if (adminGroupFilter === 'ALL') {
+        if (allowedAdminGroups.length === 3) return rows;
+        return rows.filter((r) =>
+          allowedAdminGroups.includes(r.grupo || contrataGroupMap.get(r.contratista) || 'BT'),
+        );
+      }
       return rows.filter(
         (r) => (r.grupo || contrataGroupMap.get(r.contratista) || 'BT') === adminGroupFilter,
       );
     },
-    [adminGroupFilter, contrataGroupMap],
+    [adminGroupFilter, contrataGroupMap, allowedAdminGroups],
   );
 
   const adminRowsForDate = useMemo(

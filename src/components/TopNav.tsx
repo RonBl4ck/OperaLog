@@ -10,7 +10,7 @@ import {
   Unlock,
 } from 'lucide-react';
 import { isDemoMode } from '../services/gasClient';
-import { normalizeGroup, type UserGroupScope, type UserSession } from '../types/operalog';
+import { parseUserGroups, type UserGroupScope, type UserSession } from '../types/operalog';
 
 export type AppTab = 'registro' | 'graficos' | 'catalogos';
 
@@ -59,9 +59,13 @@ export function TopNav({
 }: TopNavProps) {
   const demoMode = isDemoMode();
   const isAdmin = user.rol === 'ADMIN';
-  const userGroup = normalizeGroup(user.grupo, isAdmin ? 'ALL' : 'BT');
-  const groupBadgeLabel = userGroup === 'ALL' ? 'GENERAL' : userGroup;
-  const canSwitchGroup = isAdmin && userGroup === 'ALL';
+  const allowedGroups = parseUserGroups(user.grupo, isAdmin ? 'ALL' : 'BT');
+  const isAllGroups = allowedGroups.length === 3;
+  const groupBadgeLabel = isAllGroups ? 'GENERAL' : allowedGroups.join(' · ');
+  const canSwitchGroup = isAdmin && allowedGroups.length > 1;
+  const visibleGroupOptions = GROUP_OPTIONS.filter(
+    (opt) => opt.id === 'ALL' || allowedGroups.includes(opt.id),
+  );
 
   const [unlockMenuOpen, setUnlockMenuOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
@@ -396,7 +400,7 @@ export function TopNav({
                 aria-label="Filtro de grupo"
                 className="flex items-center gap-1 py-1.5 shrink-0"
               >
-                {GROUP_OPTIONS.map((opt) => {
+                {visibleGroupOptions.map((opt) => {
                   const isSelected = adminGroupFilter === opt.id;
                   return (
                     <button
@@ -416,9 +420,9 @@ export function TopNav({
                   );
                 })}
               </div>
-            ) : userGroup !== 'ALL' ? (
+            ) : !isAllGroups ? (
               <span
-                aria-label={`Grupo asignado: ${userGroup}`}
+                aria-label={`Grupo asignado: ${allowedGroups.join(',')}`}
                 className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold border shrink-0"
                 style={{
                   backgroundColor: 'rgba(60, 90, 159, 0.08)',
@@ -426,7 +430,7 @@ export function TopNav({
                   color: 'var(--pluz-primary)',
                 }}
               >
-                Grupo {userGroup}
+                Grupo {allowedGroups.join(', ')}
               </span>
             ) : null)}
         </div>

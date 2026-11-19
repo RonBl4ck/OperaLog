@@ -30,6 +30,25 @@ function normalizeDateValue(val) {
   return val !== undefined && val !== null ? String(val).trim() : '';
 }
 
+function parseGroups(raw, fallback) {
+  const upper = String(raw || '').trim().toUpperCase();
+  if (!upper) {
+    return fallback === 'ALL' ? ['BT', 'AP', 'MT'] : [fallback || 'BT'];
+  }
+  const tokens = upper.split(/[,\s;|/]+/).filter(Boolean);
+  if (tokens.indexOf('ALL') !== -1) {
+    return ['BT', 'AP', 'MT'];
+  }
+  const valid = [];
+  tokens.forEach(t => {
+    if ((t === 'BT' || t === 'AP' || t === 'MT') && valid.indexOf(t) === -1) {
+      valid.push(t);
+    }
+  });
+  if (valid.length > 0) return valid;
+  return fallback === 'ALL' ? ['BT', 'AP', 'MT'] : [fallback || 'BT'];
+}
+
 function normalizeGroup(raw, fallback) {
   const upper = String(raw || '').trim().toUpperCase();
   if (upper === 'BT' || upper === 'AP' || upper === 'MT' || upper === 'ALL') {
@@ -41,7 +60,9 @@ function normalizeGroup(raw, fallback) {
 function matchesGroup(itemGrupo, targetGrupo) {
   if (!targetGrupo || targetGrupo === 'ALL') return true;
   const normalizedItem = normalizeGroup(itemGrupo, 'BT');
-  return normalizedItem === 'ALL' || normalizedItem === targetGrupo;
+  if (normalizedItem === 'ALL') return true;
+  const allowed = parseGroups(targetGrupo, 'ALL');
+  return allowed.indexOf(normalizedItem) !== -1;
 }
 
 function buildContrataGroupMap(users) {
@@ -94,13 +115,19 @@ function doGet(e) {
     if (action === 'listUsers') {
       const users = sheetToObjects(SHEETS.USUARIOS)
         .filter(u => String(u.activo).toUpperCase() === 'TRUE')
-        .map(u => ({
-          usuario: u.usuario,
-          rol: u.rol,
-          contratista: u.contratista,
-          nombre_mostrar: u.nombre_mostrar,
-          grupo: normalizeGroup(u.grupo, u.rol === 'ADMIN' ? 'ALL' : 'BT'),
-        }));
+        .map(u => {
+          const allowed = parseGroups(u.grupo, u.rol === 'ADMIN' ? 'ALL' : 'BT');
+          const grupoValue = u.rol === 'ADMIN'
+            ? (allowed.length === 3 ? 'ALL' : allowed.join(','))
+            : allowed[0];
+          return {
+            usuario: u.usuario,
+            rol: u.rol,
+            contratista: u.contratista,
+            nombre_mostrar: u.nombre_mostrar,
+            grupo: grupoValue,
+          };
+        });
       return jsonResponse({ ok: true, users });
     }
 
@@ -138,7 +165,10 @@ function doGet(e) {
       if (!found) {
         return jsonResponse({ ok: false, error: 'Credenciales inválidas o usuario inactivo.' });
       }
-      const userGrupo = normalizeGroup(found.grupo, found.rol === 'ADMIN' ? 'ALL' : 'BT');
+      const allowedGroups = parseGroups(found.grupo, found.rol === 'ADMIN' ? 'ALL' : 'BT');
+      const userGrupo = found.rol === 'ADMIN'
+        ? (allowedGroups.length === 3 ? 'ALL' : allowedGroups.join(','))
+        : allowedGroups[0];
       const allCatalogs = sheetToObjects(SHEETS.CATALOGOS).map(mapCatalogRow);
       const catalogs = found.rol === 'ADMIN'
         ? (userGrupo === 'ALL' ? allCatalogs : allCatalogs.filter(c => matchesGroup(c.grupo, userGrupo)))
@@ -154,7 +184,7 @@ function doGet(e) {
       }));
       const contratasMeta = userGrupo === 'ALL'
         ? allMeta
-        : allMeta.filter(m => m.grupo === userGrupo);
+        : allMeta.filter(m => allowedGroups.indexOf(m.grupo) !== -1);
       const contratas = contratasMeta.map(m => m.nombre);
 
       return jsonResponse({

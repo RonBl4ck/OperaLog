@@ -109,6 +109,29 @@ describe('TopNav group badge and admin group switcher', () => {
     expect(screen.getByLabelText('Grupo asignado: BT')).toBeTruthy();
   });
 
+  it('shows only assigned group pills for multi-group admins like BT,AP', () => {
+    const onAdminGroupFilterChange = vi.fn();
+    render(
+      <TopNav
+        user={{ ...ADMIN_USER, usuario: 'admin.btap', grupo: 'BT,AP' }}
+        activeTab="graficos"
+        onTabChange={vi.fn()}
+        onLogout={vi.fn()}
+        adminGroupFilter="ALL"
+        onAdminGroupFilterChange={onAdminGroupFilterChange}
+      />,
+    );
+
+    expect(screen.getByText('ADMIN · BT · AP')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Todos' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'BT' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'AP' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'MT' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'BT' }));
+    expect(onAdminGroupFilterChange).toHaveBeenCalledWith('BT');
+  });
+
   it('shows CONTRATA group badge without admin group switcher', () => {
     render(
       <TopNav

@@ -133,8 +133,31 @@ export interface UserSession {
   rol: 'ADMIN' | 'CONTRATA';
   contratista: string;
   nombre_mostrar: string;
-  grupo?: UserGroupScope;
+  grupo?: string;
   ver_historico?: boolean;
+}
+
+export function parseUserGroups(
+  raw?: string | null,
+  fallback: UserGroupScope = 'BT',
+): OperalogGroup[] {
+  const upper = String(raw ?? '').trim().toUpperCase();
+  if (!upper) {
+    return fallback === 'ALL' ? ['BT', 'AP', 'MT'] : [fallback];
+  }
+  const tokens = upper.split(/[,\s;|/]+/).filter(Boolean);
+  if (tokens.includes('ALL')) {
+    return ['BT', 'AP', 'MT'];
+  }
+  const valid = Array.from(
+    new Set(
+      tokens.filter(
+        (t): t is OperalogGroup => t === 'BT' || t === 'AP' || t === 'MT',
+      ),
+    ),
+  );
+  if (valid.length > 0) return valid;
+  return fallback === 'ALL' ? ['BT', 'AP', 'MT'] : [fallback];
 }
 
 export function normalizeGroup(

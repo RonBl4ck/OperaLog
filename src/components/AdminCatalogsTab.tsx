@@ -25,6 +25,7 @@ import {
   FRONT_CONFIGS,
   OPERALOG_GROUPS,
   normalizeGroup,
+  parseUserGroups,
   type CatalogItem,
   type OperalogGroup,
   type UserGroupScope,
@@ -151,24 +152,37 @@ export function AdminCatalogsTab({
   user,
   activeGroup,
 }: AdminCatalogsTabProps) {
-  const userNormalizedGroup = normalizeGroup(user?.grupo, 'ALL');
-  const isGeneralAdmin = !user || userNormalizedGroup === 'ALL';
+  const allowedGroups = useMemo(
+    () => parseUserGroups(user?.grupo, 'ALL'),
+    [user?.grupo],
+  );
+  const isGeneralAdmin = !user || allowedGroups.length > 1;
+  const visibleCatalogGroups = useMemo(
+    () => OPERALOG_GROUPS.filter((g) => allowedGroups.includes(g.id)),
+    [allowedGroups],
+  );
 
   const [selectedGroup, setSelectedGroup] = useState<OperalogGroup>(() => {
-    const initial = activeGroup ?? user?.grupo;
-    const normalized = normalizeGroup(initial, 'ALL');
-    return normalized === 'ALL' ? 'BT' : normalized;
+    if (activeGroup && activeGroup !== 'ALL' && allowedGroups.includes(activeGroup)) {
+      return activeGroup;
+    }
+    return allowedGroups[0] ?? 'BT';
   });
 
   useEffect(() => {
-    if (isGeneralAdmin && activeGroup && activeGroup !== 'ALL') {
+    if (
+      isGeneralAdmin &&
+      activeGroup &&
+      activeGroup !== 'ALL' &&
+      allowedGroups.includes(activeGroup)
+    ) {
       setSelectedGroup(activeGroup);
     }
-  }, [isGeneralAdmin, activeGroup]);
+  }, [isGeneralAdmin, activeGroup, allowedGroups]);
 
   const effectiveGroup: OperalogGroup = isGeneralAdmin
     ? selectedGroup
-    : (userNormalizedGroup as OperalogGroup);
+    : (allowedGroups[0] ?? 'BT');
 
   const [items, setItems] = useState<EditableCatalogItem[]>(() => toEditableItems(catalog));
   const [activeTipo, setActiveTipo] = useState<CatalogTipo>('HORARIO');
@@ -578,7 +592,7 @@ export function AdminCatalogsTab({
                 borderColor: 'var(--pluz-border)',
               }}
             >
-              {OPERALOG_GROUPS.map((g) => {
+              {visibleCatalogGroups.map((g) => {
                 const active = effectiveGroup === g.id;
                 return (
                   <button
