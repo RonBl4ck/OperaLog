@@ -23,7 +23,7 @@ import {
 import { refreshAllCatalogs, saveCatalog } from '../services/gasClient';
 import {
   FRONT_CONFIGS,
-  OPERALOG_GROUPS,
+  getGroupLabel,
   normalizeGroup,
   parseUserGroups,
   type CatalogItem,
@@ -43,6 +43,7 @@ export interface AdminCatalogsTabProps {
   onCatalogSaved: (updatedCatalog: CatalogItem[]) => void;
   user?: UserSession;
   activeGroup?: UserGroupScope;
+  availableGroups?: OperalogGroup[];
 }
 
 interface TipoConfig {
@@ -151,14 +152,21 @@ export function AdminCatalogsTab({
   onCatalogSaved,
   user,
   activeGroup,
+  availableGroups,
 }: AdminCatalogsTabProps) {
   const allowedGroups = useMemo(
-    () => parseUserGroups(user?.grupo, 'ALL'),
-    [user?.grupo],
+    () => parseUserGroups(user?.grupo, 'ALL', availableGroups),
+    [user?.grupo, availableGroups],
   );
-  const isGeneralAdmin = !user || allowedGroups.length > 1;
+  const isGeneralAdmin =
+    !user || normalizeGroup(user.grupo, 'ALL') === 'ALL' || allowedGroups.length > 1;
   const visibleCatalogGroups = useMemo(
-    () => OPERALOG_GROUPS.filter((g) => allowedGroups.includes(g.id)),
+    () =>
+      allowedGroups.map((id) => ({
+        id,
+        shortLabel: id,
+        label: getGroupLabel(id),
+      })),
     [allowedGroups],
   );
 
@@ -621,8 +629,7 @@ export function AdminCatalogsTab({
                 color: 'var(--pluz-ink)',
               }}
             >
-              Grupo:{' '}
-              {OPERALOG_GROUPS.find((g) => g.id === effectiveGroup)?.label ?? effectiveGroup}
+              Grupo: {getGroupLabel(effectiveGroup)}
             </span>
           )}
 

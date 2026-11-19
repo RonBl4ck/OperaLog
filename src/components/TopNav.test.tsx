@@ -132,6 +132,23 @@ describe('TopNav group badge and admin group switcher', () => {
     expect(onAdminGroupFilterChange).toHaveBeenCalledWith('BT');
   });
 
+  it('supports dynamic custom group codes like BT-N and BT-NT without falling back to BT', () => {
+    render(
+      <TopNav
+        user={{ ...ADMIN_USER, usuario: 'pluz.norte', grupo: 'BT-NT' }}
+        activeTab="graficos"
+        onTabChange={vi.fn()}
+        onLogout={vi.fn()}
+        adminGroupFilter="BT-NT"
+        onAdminGroupFilterChange={vi.fn()}
+        availableGroups={['BT', 'BT-N', 'BT-NT']}
+      />,
+    );
+
+    expect(screen.getByText('ADMIN · BT-NT')).toBeTruthy();
+    expect(screen.getByLabelText('Grupo asignado: BT-NT')).toBeTruthy();
+  });
+
   it('shows CONTRATA group badge without admin group switcher', () => {
     render(
       <TopNav

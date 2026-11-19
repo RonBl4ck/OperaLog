@@ -15,6 +15,7 @@ import {
   getTurnsRange,
 } from './services/gasClient';
 import {
+  collectAvailableGroups,
   parseUserGroups,
   type CatalogItem,
   type ContrataMeta,
@@ -259,9 +260,14 @@ export default function App() {
     [catalogs],
   );
 
+  const availableGroups = useMemo(
+    () => collectAvailableGroups(contratasMeta, catalogs, user?.grupo),
+    [contratasMeta, catalogs, user?.grupo],
+  );
+
   const allowedAdminGroups = useMemo(
-    () => parseUserGroups(user?.grupo, 'ALL'),
-    [user?.grupo],
+    () => parseUserGroups(user?.grupo, 'ALL', availableGroups),
+    [user?.grupo, availableGroups],
   );
 
   const handleAdminGroupFilterChange = useCallback(
@@ -283,18 +289,18 @@ export default function App() {
 
   const scopedContratas = useMemo(() => {
     if (adminGroupFilter === 'ALL') {
-      if (allowedAdminGroups.length === 3) return contratas;
+      if (allowedAdminGroups.length === availableGroups.length) return contratas;
       return contratas.filter((c) =>
         allowedAdminGroups.includes(contrataGroupMap.get(c) ?? 'BT'),
       );
     }
     return contratas.filter((c) => (contrataGroupMap.get(c) ?? 'BT') === adminGroupFilter);
-  }, [contratas, contrataGroupMap, adminGroupFilter, allowedAdminGroups]);
+  }, [contratas, contrataGroupMap, adminGroupFilter, allowedAdminGroups, availableGroups]);
 
   const filterRowsByGroup = useCallback(
     (rows: TurnRow[]): TurnRow[] => {
       if (adminGroupFilter === 'ALL') {
-        if (allowedAdminGroups.length === 3) return rows;
+        if (allowedAdminGroups.length === availableGroups.length) return rows;
         return rows.filter((r) =>
           allowedAdminGroups.includes(r.grupo || contrataGroupMap.get(r.contratista) || 'BT'),
         );
@@ -303,7 +309,7 @@ export default function App() {
         (r) => (r.grupo || contrataGroupMap.get(r.contratista) || 'BT') === adminGroupFilter,
       );
     },
-    [adminGroupFilter, contrataGroupMap, allowedAdminGroups],
+    [adminGroupFilter, contrataGroupMap, allowedAdminGroups, availableGroups],
   );
 
   const adminRowsForDate = useMemo(
@@ -338,6 +344,7 @@ export default function App() {
         onLockHistory={handleLockHistory}
         adminGroupFilter={adminGroupFilter}
         onAdminGroupFilterChange={handleAdminGroupFilterChange}
+        availableGroups={availableGroups}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
@@ -416,6 +423,7 @@ export default function App() {
         {activeTab === 'catalogos' && user.rol === 'ADMIN' && isHistoryUnlocked && (
           <AdminCatalogsTab
             catalog={catalogs}
+            availableGroups={availableGroups}
             onCatalogSaved={(updated) => {
               setCatalogs(updated);
               addToast({

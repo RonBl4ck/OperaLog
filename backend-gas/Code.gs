@@ -33,28 +33,28 @@ function normalizeDateValue(val) {
 function parseGroups(raw, fallback) {
   const upper = String(raw || '').trim().toUpperCase();
   if (!upper) {
-    return fallback === 'ALL' ? ['BT', 'AP', 'MT'] : [fallback || 'BT'];
+    return fallback === 'ALL' ? ['ALL'] : [fallback || 'BT'];
   }
-  const tokens = upper.split(/[,\s;|/]+/).filter(Boolean);
+  const tokens = upper
+    .split(/[,;|]+/)
+    .map(t => t.trim())
+    .filter(Boolean);
   if (tokens.indexOf('ALL') !== -1) {
-    return ['BT', 'AP', 'MT'];
+    return ['ALL'];
   }
   const valid = [];
   tokens.forEach(t => {
-    if ((t === 'BT' || t === 'AP' || t === 'MT') && valid.indexOf(t) === -1) {
+    if (valid.indexOf(t) === -1) {
       valid.push(t);
     }
   });
   if (valid.length > 0) return valid;
-  return fallback === 'ALL' ? ['BT', 'AP', 'MT'] : [fallback || 'BT'];
+  return fallback === 'ALL' ? ['ALL'] : [fallback || 'BT'];
 }
 
 function normalizeGroup(raw, fallback) {
   const upper = String(raw || '').trim().toUpperCase();
-  if (upper === 'BT' || upper === 'AP' || upper === 'MT' || upper === 'ALL') {
-    return upper;
-  }
-  return fallback || 'BT';
+  return upper.length > 0 ? upper : (fallback || 'BT');
 }
 
 function matchesGroup(itemGrupo, targetGrupo) {
@@ -62,6 +62,7 @@ function matchesGroup(itemGrupo, targetGrupo) {
   const normalizedItem = normalizeGroup(itemGrupo, 'BT');
   if (normalizedItem === 'ALL') return true;
   const allowed = parseGroups(targetGrupo, 'ALL');
+  if (allowed.indexOf('ALL') !== -1) return true;
   return allowed.indexOf(normalizedItem) !== -1;
 }
 
@@ -118,7 +119,7 @@ function doGet(e) {
         .map(u => {
           const allowed = parseGroups(u.grupo, u.rol === 'ADMIN' ? 'ALL' : 'BT');
           const grupoValue = u.rol === 'ADMIN'
-            ? (allowed.length === 3 ? 'ALL' : allowed.join(','))
+            ? (allowed.indexOf('ALL') !== -1 ? 'ALL' : allowed.join(','))
             : allowed[0];
           return {
             usuario: u.usuario,
@@ -166,8 +167,9 @@ function doGet(e) {
         return jsonResponse({ ok: false, error: 'Credenciales inválidas o usuario inactivo.' });
       }
       const allowedGroups = parseGroups(found.grupo, found.rol === 'ADMIN' ? 'ALL' : 'BT');
+      const isAllAdmin = allowedGroups.indexOf('ALL') !== -1;
       const userGrupo = found.rol === 'ADMIN'
-        ? (allowedGroups.length === 3 ? 'ALL' : allowedGroups.join(','))
+        ? (isAllAdmin ? 'ALL' : allowedGroups.join(','))
         : allowedGroups[0];
       const allCatalogs = sheetToObjects(SHEETS.CATALOGOS).map(mapCatalogRow);
       const catalogs = found.rol === 'ADMIN'
@@ -372,7 +374,7 @@ function doPost(e) {
       const sheet = getSheet(SHEETS.CATALOGOS);
       const headers = ['tipo', 'frente', 'valor', 'orden', 'activo', 'grupo'];
       const targetGrupoRaw = String(body.grupo || '').trim().toUpperCase();
-      const isScopedGroup = targetGrupoRaw === 'BT' || targetGrupoRaw === 'AP' || targetGrupoRaw === 'MT';
+      const isScopedGroup = targetGrupoRaw.length > 0 && targetGrupoRaw !== 'ALL';
 
       const sanitizedItems = (Array.isArray(body.items) ? body.items : [])
         .map((c, idx) => {

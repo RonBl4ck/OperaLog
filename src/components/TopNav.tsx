@@ -10,7 +10,13 @@ import {
   Unlock,
 } from 'lucide-react';
 import { isDemoMode } from '../services/gasClient';
-import { parseUserGroups, type UserGroupScope, type UserSession } from '../types/operalog';
+import {
+  normalizeGroup,
+  parseUserGroups,
+  type OperalogGroup,
+  type UserGroupScope,
+  type UserSession,
+} from '../types/operalog';
 
 export type AppTab = 'registro' | 'graficos' | 'catalogos';
 
@@ -24,14 +30,8 @@ export interface TopNavProps {
   onLockHistory?: () => void;
   adminGroupFilter?: UserGroupScope;
   onAdminGroupFilterChange?: (g: UserGroupScope) => void;
+  availableGroups?: OperalogGroup[];
 }
-
-const GROUP_OPTIONS: { id: UserGroupScope; label: string }[] = [
-  { id: 'ALL', label: 'Todos' },
-  { id: 'BT', label: 'BT' },
-  { id: 'AP', label: 'AP' },
-  { id: 'MT', label: 'MT' },
-];
 
 interface TabDef {
   id: AppTab;
@@ -56,16 +56,19 @@ export function TopNav({
   onLockHistory,
   adminGroupFilter = 'ALL',
   onAdminGroupFilterChange,
+  availableGroups,
 }: TopNavProps) {
   const demoMode = isDemoMode();
   const isAdmin = user.rol === 'ADMIN';
-  const allowedGroups = parseUserGroups(user.grupo, isAdmin ? 'ALL' : 'BT');
-  const isAllGroups = allowedGroups.length === 3;
+  const rawGrupo = normalizeGroup(user.grupo, isAdmin ? 'ALL' : 'BT');
+  const isAllGroups = rawGrupo === 'ALL';
+  const allowedGroups = parseUserGroups(user.grupo, isAdmin ? 'ALL' : 'BT', availableGroups);
   const groupBadgeLabel = isAllGroups ? 'GENERAL' : allowedGroups.join(' · ');
-  const canSwitchGroup = isAdmin && allowedGroups.length > 1;
-  const visibleGroupOptions = GROUP_OPTIONS.filter(
-    (opt) => opt.id === 'ALL' || allowedGroups.includes(opt.id),
-  );
+  const canSwitchGroup = isAdmin && (isAllGroups || allowedGroups.length > 1);
+  const visibleGroupOptions: { id: UserGroupScope; label: string }[] = [
+    { id: 'ALL', label: 'Todos' },
+    ...allowedGroups.map((g) => ({ id: g, label: g })),
+  ];
 
   const [unlockMenuOpen, setUnlockMenuOpen] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');

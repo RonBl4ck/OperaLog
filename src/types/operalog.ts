@@ -1,11 +1,19 @@
-export type OperalogGroup = 'BT' | 'AP' | 'MT';
-export type UserGroupScope = OperalogGroup | 'ALL';
+export type OperalogGroup = string;
+export type UserGroupScope = string;
+
+export const DEFAULT_GROUP_IDS = ['BT', 'AP', 'MT'] as const;
 
 export const OPERALOG_GROUPS: { id: OperalogGroup; label: string; shortLabel: string }[] = [
   { id: 'BT', label: 'Baja Tensión (BT)', shortLabel: 'BT' },
   { id: 'AP', label: 'Alumbrado Público (AP)', shortLabel: 'AP' },
   { id: 'MT', label: 'Media Tensión (MT)', shortLabel: 'MT' },
 ];
+
+export function getGroupLabel(id: string): string {
+  const upper = id.trim().toUpperCase();
+  const known = OPERALOG_GROUPS.find((g) => g.id === upper);
+  return known ? known.label : upper;
+}
 
 export interface ContrataMeta {
   nombre: string;
@@ -140,24 +148,55 @@ export interface UserSession {
 export function parseUserGroups(
   raw?: string | null,
   fallback: UserGroupScope = 'BT',
+  knownGroups?: string[],
 ): OperalogGroup[] {
+  const defaultAll =
+    knownGroups && knownGroups.length > 0 ? knownGroups : [...DEFAULT_GROUP_IDS];
   const upper = String(raw ?? '').trim().toUpperCase();
   if (!upper) {
-    return fallback === 'ALL' ? ['BT', 'AP', 'MT'] : [fallback];
+    return fallback === 'ALL' ? defaultAll : [fallback];
   }
-  const tokens = upper.split(/[,\s;|/]+/).filter(Boolean);
+  const tokens = upper
+    .split(/[,;|]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
   if (tokens.includes('ALL')) {
-    return ['BT', 'AP', 'MT'];
+    return defaultAll;
   }
-  const valid = Array.from(
-    new Set(
-      tokens.filter(
-        (t): t is OperalogGroup => t === 'BT' || t === 'AP' || t === 'MT',
-      ),
-    ),
-  );
+  const valid = Array.from(new Set(tokens));
   if (valid.length > 0) return valid;
-  return fallback === 'ALL' ? ['BT', 'AP', 'MT'] : [fallback];
+  return fallback === 'ALL' ? defaultAll : [fallback];
+}
+
+export function collectAvailableGroups(
+  contratasMeta: ContrataMeta[],
+  catalogs: CatalogItem[] = [],
+  userGrupo?: string | null,
+): OperalogGroup[] {
+  const set = new Set<string>();
+  for (const c of contratasMeta) {
+    const g = normalizeGroup(c.grupo, 'BT');
+    if (g && g !== 'ALL') set.add(g);
+  }
+  for (const cat of catalogs) {
+    const g = normalizeGroup(cat.grupo, cat.tipo === 'HORARIO' ? 'ALL' : 'BT');
+    if (g && g !== 'ALL') set.add(g);
+  }
+  if (userGrupo) {
+    const tokens = String(userGrupo)
+      .trim()
+      .toUpperCase()
+      .split(/[,;|]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0 && t !== 'ALL');
+    for (const t of tokens) {
+      set.add(t);
+    }
+  }
+  if (set.size === 0) {
+    return [...DEFAULT_GROUP_IDS];
+  }
+  return Array.from(set);
 }
 
 export function normalizeGroup(
@@ -165,10 +204,7 @@ export function normalizeGroup(
   fallback: UserGroupScope = 'BT',
 ): UserGroupScope {
   const upper = String(raw ?? '').trim().toUpperCase();
-  if (upper === 'BT' || upper === 'AP' || upper === 'MT' || upper === 'ALL') {
-    return upper;
-  }
-  return fallback;
+  return upper.length > 0 ? upper : fallback;
 }
 
 export function matchesGroupCatalog(

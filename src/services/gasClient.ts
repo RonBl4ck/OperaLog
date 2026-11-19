@@ -424,26 +424,9 @@ export async function getPublicUsers(): Promise<PublicUserOption[]> {
       return u;
     });
   }
-  const CACHE_KEY = 'operalog_public_users_v1';
-  try {
-    const cached = sessionStorage.getItem(CACHE_KEY);
-    if (cached) {
-      return JSON.parse(cached) as PublicUserOption[];
-    }
-  } catch {
-    // Ignore sessionStorage read error
-  }
   try {
     const res = await gasGet<PublicUserOption[] | { users?: PublicUserOption[] }>('listUsers');
-    const users = Array.isArray(res) ? res : (res.users ?? []);
-    if (users.length > 0) {
-      try {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify(users));
-      } catch {
-        // Ignore sessionStorage write error
-      }
-    }
-    return users;
+    return Array.isArray(res) ? res : (res.users ?? []);
   } catch {
     return [];
   }
@@ -770,14 +753,15 @@ export async function saveCatalog(
   const grupo = Array.isArray(payload) ? undefined : payload.grupo;
 
   if (isDemoMode()) {
-    if (grupo === 'BT' || grupo === 'AP' || grupo === 'MT') {
+    const normalizedTarget = grupo ? normalizeGroup(grupo, 'ALL') : 'ALL';
+    if (normalizedTarget && normalizedTarget !== 'ALL') {
       const existing = readLocalCatalogs();
       const otherGroups = existing.filter(
-        (c) => normalizeGroup(c.grupo, c.tipo === 'HORARIO' ? 'ALL' : 'BT') !== grupo,
+        (c) => normalizeGroup(c.grupo, c.tipo === 'HORARIO' ? 'ALL' : 'BT') !== normalizedTarget,
       );
       const scopedItems = items.map((c) => ({
         ...c,
-        grupo: normalizeGroup(c.grupo, grupo),
+        grupo: normalizeGroup(c.grupo, normalizedTarget),
       }));
       const merged = [...otherGroups, ...scopedItems];
       writeLocalCatalogs(merged);
