@@ -13,12 +13,14 @@ import {
   getTodayIsoDate,
   getTurn,
   getTurnsRange,
+  updateTurnRow,
 } from './services/gasClient';
 import {
   collectAvailableGroups,
   parseUserGroups,
   type CatalogItem,
   type ContrataMeta,
+  type EditableTurnField,
   type OperalogGroup,
   type ToastMessage,
   type TurnRow,
@@ -251,6 +253,38 @@ export default function App() {
     setCurrentFecha(fecha);
   }, []);
 
+  const handleAdminUpdateCell = useCallback(
+    async (row: TurnRow, changes: Partial<Record<EditableTurnField, string>>) => {
+      if (!user || user.rol !== 'ADMIN') return;
+      const result = await updateTurnRow({
+        id: row.id,
+        fecha: row.fecha,
+        contratista: row.contratista,
+        changes,
+        usuario: user.usuario,
+        rol: user.rol,
+        userGrupo: user.grupo,
+      });
+      if (result.changedFields.length === 0) return;
+
+      setAdminTurnsCache((prev) => {
+        const currentList = prev[row.fecha] ?? [];
+        return {
+          ...prev,
+          [row.fecha]: currentList.map((item) => (item.id === row.id ? result.row : item)),
+        };
+      });
+      setAdminRangeCache({});
+
+      addToast({
+        type: 'success',
+        title: 'Registro actualizado',
+        description: `Se corrigió ${result.changedFields.join(', ')} en ${result.row.nombres || row.contratista}.`,
+      });
+    },
+    [user, addToast],
+  );
+
   const activeHorarios = useMemo(
     () =>
       catalogs
@@ -366,6 +400,9 @@ export default function App() {
               onToast={addToast}
               contrataGroupMap={contrataGroupMap}
               activeGroup={adminGroupFilter}
+              canEditToday={currentFecha === getTodayIsoDate()}
+              catalogs={catalogs}
+              onUpdateCell={handleAdminUpdateCell}
             />
           ) : (
             <OperationsTab

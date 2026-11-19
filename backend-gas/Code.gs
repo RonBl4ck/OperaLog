@@ -10,6 +10,30 @@ const SHEETS = {
   AUDITORIA: 'Auditoria_Cambios',
 };
 
+const EDITABLE_TURN_FIELDS = [
+  'frente',
+  'nombres',
+  'usuario_ssam',
+  'celular',
+  'actividad',
+  'skill',
+  'horario',
+];
+
+function parseAdminEditedFieldsList(raw) {
+  const tokens = String(raw || '')
+    .split(/[,;|]+/)
+    .map(t => t.trim().toLowerCase())
+    .filter(t => EDITABLE_TURN_FIELDS.indexOf(t) !== -1);
+  const unique = [];
+  tokens.forEach(t => {
+    if (unique.indexOf(t) === -1) {
+      unique.push(t);
+    }
+  });
+  return unique;
+}
+
 function jsonResponse(payload) {
   return ContentService
     .createTextOutput(JSON.stringify(payload))
@@ -222,6 +246,7 @@ function doGet(e) {
       const allRows = sheetToObjects(SHEETS.TURNOS).map(r => ({
         ...r,
         grupo: normalizeGroup(r.grupo, contrataGroupMap[r.contratista] || 'BT'),
+        admin_edited_fields: parseAdminEditedFieldsList(r.admin_edited_fields),
       }));
       const filtered = allRows.filter(r => {
         if (r.fecha !== fecha) return false;
@@ -242,6 +267,7 @@ function doGet(e) {
       const allRows = sheetToObjects(SHEETS.TURNOS).map(r => ({
         ...r,
         grupo: normalizeGroup(r.grupo, contrataGroupMap[r.contratista] || 'BT'),
+        admin_edited_fields: parseAdminEditedFieldsList(r.admin_edited_fields),
       }));
       const filtered = allRows.filter(r => {
         if (!r.fecha) return false;
@@ -365,6 +391,171 @@ function doPost(e) {
       auditSheet.appendRow([nowIso, usuario, contratista, fecha, 'SAVE_TURN', newRows.length]);
 
       return jsonResponse({ ok: true, savedCount: newRows.length });
+    }
+
+    if (action === 'updateTurnRow') {
+      const usuario = String(body.usuario || '').trim().toLowerCase();
+      const id = String(body.id || '').trim();
+      const contratista = String(body.contratista || '').trim();
+      const normalizedFecha = normalizeDateValue(body.fecha);
+      const changes = body.changes && typeof body.changes === 'object' ? body.changes : null;
+
+      if (!usuario || !id || !contratista || !normalizedFecha || !changes) {
+        return jsonResponse({ ok: false, error: 'Payload inválido para updateTurnRow.' });
+      }
+
+      const users = sheetToObjects(SHEETS.USUARIOS);
+      const adminUser = users.find(
+        u =>
+          String(u.usuario || '').trim().toLowerCase() === usuario &&
+          String(u.activo || '').trim().toUpperCase() === 'TRUE' &&
+          String(u.rol || '').trim().toUpperCase() === 'ADMIN'
+      );
+      if (!adminUser) {
+        return jsonResponse({
+          ok: false,
+          error: 'Solo usuarios activos con rol ADMIN pueden editar registros.',
+        });
+      }
+
+      const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      if (normalizedFecha !== today) {
+        return jsonResponse({
+          ok: false,
+          error: 'Solo se pueden editar registros del día de hoy (' + today + ').',
+        });
+      }
+
+      const allowedGroups = parseGroups(adminUser.grupo, 'ALL');
+      const adminUserGrupo = allowedGroups.indexOf('ALL') !== -1 ? 'ALL' : allowedGroups.join(',');
+
+      const sheet = getSheet(SHEETS.TURNOS);
+      const data = sheet.getDataRange().getValues();
+      if (data.length < 2) {
+        return jsonResponse({ ok: false, error: 'No existen registros en Turnos_Capacidad.' });
+      }
+
+      const headers = data[0].map(h => String(h || '').trim());
+      let headersChanged = false;
+      if (headers.indexOf('grupo') === -1) {
+        headers.push('grupo');
+        headersChanged = true;
+      }
+      if (headers.indexOf('admin_edited_fields') === -1) {
+        headers.push('admin_edited_fields');
+        headersChanged = true;
+      }
+      if (headersChanged) {
+        sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      }
+
+      const idColIdx = headers.indexOf('id');
+      const fechaColIdx = headers.indexOf('fecha');
+      const contrataColIdx = headers.indexOf('contratista');
+      const grupoColIdx = headers.indexOf('grupo');
+      const updatedAtColIdx = headers.indexOf('updated_at');
+      const updatedByColIdx = headers.indexOf('updated_by');
+      const adminEditedColIdx = headers.indexOf('admin_edited_fields');
+
+      let targetIndex = -1;
+      for (let i = 1; i < data.length; i++) {
+        const rowId = String(data[i][idColIdx] || '').trim();
+        const rowFecha = normalizeDateValue(data[i][fechaColIdx]);
+        const rowContrata = String(data[i][contrataColIdx] || '').trim();
+        if (rowId === id && rowFecha === normalizedFecha && rowContrata === contratista) {
+          targetIndex = i;
+          break;
+        }
+      }
+
+      if (targetIndex === -1) {
+        return jsonResponse({ ok: false, error: 'No se encontró el registro especificado.' });
+      }
+
+      const contrataGroupMap = buildContrataGroupMap(users);
+      const existingRow = data[targetIndex].slice(0, headers.length);
+      while (existingRow.length < headers.length) {
+        existingRow.push('');
+      }
+
+      const rowGrupo = normalizeGroup(
+        existingRow[grupoColIdx],
+        contrataGroupMap[contratista] || 'BT'
+      );
+      if (!matchesGroup(rowGrupo, adminUserGrupo)) {
+        return jsonResponse({
+          ok: false,
+          error: 'No tienes permiso para editar registros del grupo ' + rowGrupo + '.',
+        });
+      }
+
+      const changedFields = [];
+      const diffParts = [];
+      EDITABLE_TURN_FIELDS.forEach(field => {
+        if (!Object.prototype.hasOwnProperty.call(changes, field)) return;
+        const colIdx = headers.indexOf(field);
+        if (colIdx === -1) return;
+        const prevVal = String(existingRow[colIdx] !== undefined && existingRow[colIdx] !== null ? existingRow[colIdx] : '').trim();
+        const nextVal = String(changes[field] !== undefined && changes[field] !== null ? changes[field] : '').trim();
+        if (prevVal !== nextVal) {
+          existingRow[colIdx] = nextVal;
+          changedFields.push(field);
+          diffParts.push(field + ': ' + (prevVal || '(vacío)') + ' -> ' + (nextVal || '(vacío)'));
+        }
+      });
+
+      const existingEdited = parseAdminEditedFieldsList(existingRow[adminEditedColIdx]);
+      const nowIso = new Date().toISOString();
+
+      if (changedFields.length > 0) {
+        const mergedEdited = parseAdminEditedFieldsList(
+          existingEdited.concat(changedFields).join(',')
+        );
+        existingRow[grupoColIdx] = rowGrupo;
+        existingRow[adminEditedColIdx] = mergedEdited.join(',');
+        if (updatedAtColIdx !== -1) existingRow[updatedAtColIdx] = nowIso;
+        if (updatedByColIdx !== -1) existingRow[updatedByColIdx] = adminUser.usuario;
+
+        const targetRowNumber = targetIndex + 1;
+        const celularColIdx = headers.indexOf('celular');
+        if (celularColIdx !== -1 && changedFields.indexOf('celular') !== -1) {
+          sheet.getRange(targetRowNumber, celularColIdx + 1).setNumberFormat('@');
+        }
+        sheet.getRange(targetRowNumber, 1, 1, headers.length).setValues([existingRow]);
+
+        try {
+          const auditSheet = getSheet(SHEETS.AUDITORIA);
+          auditSheet.appendRow([
+            nowIso,
+            adminUser.usuario,
+            contratista,
+            normalizedFecha,
+            'ADMIN_EDIT_ROW',
+            'id=' + id + ' | ' + diffParts.join('; '),
+          ]);
+        } catch (auditErr) {
+          // No bloquear la actualización si falla la hoja de auditoría
+        }
+      }
+
+      const updatedObj = {};
+      headers.forEach((h, idx) => {
+        if (h === 'fecha') {
+          updatedObj[h] = normalizedFecha;
+        } else if (h === 'grupo') {
+          updatedObj[h] = rowGrupo;
+        } else if (h === 'admin_edited_fields') {
+          updatedObj[h] = parseAdminEditedFieldsList(existingRow[idx]);
+        } else {
+          updatedObj[h] = existingRow[idx] !== undefined && existingRow[idx] !== null ? String(existingRow[idx]).trim() : '';
+        }
+      });
+
+      return jsonResponse({
+        ok: true,
+        row: updatedObj,
+        changedFields: changedFields,
+      });
     }
 
     if (action === 'saveCatalog') {

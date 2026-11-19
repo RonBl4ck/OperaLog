@@ -113,6 +113,43 @@ export const FRONT_CONFIGS: FrontConfig[] = [
   },
 ];
 
+export const EDITABLE_TURN_FIELDS = [
+  'frente',
+  'nombres',
+  'usuario_ssam',
+  'celular',
+  'actividad',
+  'skill',
+  'horario',
+] as const;
+
+export type EditableTurnField = (typeof EDITABLE_TURN_FIELDS)[number];
+
+const EDITABLE_TURN_FIELD_SET = new Set<string>(EDITABLE_TURN_FIELDS);
+
+export function parseAdminEditedFields(
+  raw?: string | string[] | null,
+): EditableTurnField[] {
+  const tokens = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(/[,;|]+/)
+      : [];
+  const seen = new Set<EditableTurnField>();
+  const result: EditableTurnField[] = [];
+  for (const token of tokens) {
+    const normalized = String(token ?? '').trim().toLowerCase();
+    if (EDITABLE_TURN_FIELD_SET.has(normalized)) {
+      const field = normalized as EditableTurnField;
+      if (!seen.has(field)) {
+        seen.add(field);
+        result.push(field);
+      }
+    }
+  }
+  return result;
+}
+
 export interface TurnRow {
   id: string;
   fecha: string;
@@ -125,6 +162,9 @@ export interface TurnRow {
   actividad: string;
   skill: string;
   horario: string;
+  updated_at?: string;
+  updated_by?: string;
+  admin_edited_fields?: EditableTurnField[];
 }
 
 export interface CatalogItem {

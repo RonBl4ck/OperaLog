@@ -13,11 +13,17 @@ import {
   FileSpreadsheet,
   Filter,
   Loader2,
+  Pencil,
   RefreshCw,
   Search,
+  X,
 } from 'lucide-react';
 import {
   FRONT_CONFIGS,
+  getActiveFrontConfigs,
+  matchesGroupCatalog,
+  type CatalogItem,
+  type EditableTurnField,
   type FrontType,
   type OperalogGroup,
   type ToastMessage,
@@ -39,6 +45,12 @@ interface AdminTurnsViewProps {
   allowDateChange?: boolean;
   contrataGroupMap?: Map<string, OperalogGroup>;
   activeGroup?: UserGroupScope;
+  canEditToday?: boolean;
+  catalogs?: CatalogItem[];
+  onUpdateCell?: (
+    row: TurnRow,
+    changes: Partial<Record<EditableTurnField, string>>,
+  ) => Promise<void>;
 }
 
 type SortColumn =
@@ -221,6 +233,9 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
   allowDateChange = true,
   contrataGroupMap,
   activeGroup = 'ALL',
+  canEditToday = false,
+  catalogs = [],
+  onUpdateCell,
 }) => {
   const [selectedContratas, setSelectedContratas] = useState<string[]>(() =>
     selectedContrata && selectedContrata !== 'ALL' ? [selectedContrata] : [],
@@ -232,6 +247,18 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
     column: SortColumn;
     direction: SortDirection;
   } | null>(null);
+  const [editingCell, setEditingCell] = useState<{
+    rowId: string;
+    field: EditableTurnField;
+  } | null>(null);
+  const [draftValue, setDraftValue] = useState<string>('');
+  const [savingCell, setSavingCell] = useState<boolean>(false);
+
+  const isEditable = Boolean(canEditToday && onUpdateCell);
+
+  useEffect(() => {
+    setEditingCell(null);
+  }, [fecha, canEditToday]);
 
   // Sync external selectedContrata changes (e.g. drill-down from ChartsTab)
   useEffect(() => {
@@ -353,6 +380,286 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
     }
   };
 
+  const hasAdminEditedToday = useMemo(
+    () =>
+      Boolean(
+        canEditToday &&
+          sortedRows.some((r) => (r.admin_edited_fields?.length ?? 0) > 0),
+      ),
+    [canEditToday, sortedRows],
+  );
+
+  const fieldLabelMap: Record<EditableTurnField, string> = {
+    frente: 'Frente',
+    nombres: 'Nombres',
+    usuario_ssam: 'Usuario SSAM',
+    celular: 'Celular',
+    actividad: 'Actividad',
+    skill: 'Skill',
+    horario: 'Horario',
+  };
+
+  const startEditing = (row: TurnRow, field: EditableTurnField) => {
+    if (!isEditable || savingCell) return;
+    setEditingCell({ rowId: row.id, field });
+    setDraftValue(String(row[field] ?? ''));
+  };
+
+  const cancelEditing = () => {
+    if (savingCell) return;
+    setEditingCell(null);
+  };
+
+  const commitEditing = async (row: TurnRow, field: EditableTurnField) => {
+    if (!onUpdateCell || savingCell) return;
+    const nextVal = draftValue.trim();
+    const prevVal = String(row[field] ?? '').trim();
+
+    if (nextVal === prevVal) {
+      setEditingCell(null);
+      return;
+    }
+
+    const changes: Partial<Record<EditableTurnField, string>> = {
+      [field]: nextVal,
+    };
+
+    if (field === 'frente') {
+      const nextCfg = FRONT_CONFIGS.find((f) => f.id === nextVal);
+      const prevCfg = FRONT_CONFIGS.find((f) => f.id === row.frente);
+      if (nextCfg?.fixedActivity) {
+        changes.actividad = nextCfg.fixedActivity;
+      } else if (prevCfg?.fixedActivity && row.actividad === prevCfg.fixedActivity) {
+        changes.actividad = '';
+      }
+      if (nextCfg && !nextCfg.hasSkill) {
+        changes.skill = '';
+      }
+    }
+
+    setSavingCell(true);
+    try {
+      await onUpdateCell(row, changes);
+      setEditingCell(null);
+    } catch (err) {
+      onToast({
+        type: 'error',
+        title: 'Error al actualizar registro',
+        description: err instanceof Error ? err.message : 'Intente nuevamente.',
+      });
+    } finally {
+      setSavingCell(false);
+    }
+  };
+
+  const getSelectOptions = (
+    row: TurnRow,
+    field: EditableTurnField,
+    rowGroup: OperalogGroup,
+  ): { value: string; label: string }[] | null => {
+    if (field === 'frente') {
+      const activeFronts =
+        catalogs.length > 0 ? getActiveFrontConfigs(catalogs, rowGroup) : FRONT_CONFIGS;
+      const list = activeFronts.map((f) => ({ value: f.id, label: f.label }));
+      if (row.frente && !list.some((o) => o.value === row.frente)) {
+        list.unshift({
+          value: row.frente,
+          label: frontLabelMap.get(row.frente) ?? row.frente,
+        });
+      }
+      return list;
+    }
+
+    if (field === 'horario') {
+      const items = catalogs
+        .filter((c) => c.tipo === 'HORARIO' && c.activo && matchesGroupCatalog(c.grupo, rowGroup))
+        .sort((a, b) => a.orden - b.orden)
+        .map((c) => ({ value: c.valor, label: c.valor }));
+      if (items.length === 0) return null;
+      if (row.horario && !items.some((o) => o.value === row.horario)) {
+        items.unshift({ value: row.horario, label: row.horario });
+      }
+      return items;
+    }
+
+    if (field === 'skill') {
+      const items = catalogs
+        .filter(
+          (c) =>
+            c.tipo === 'SKILL' &&
+            c.activo &&
+            c.frente === row.frente &&
+            matchesGroupCatalog(c.grupo, rowGroup),
+        )
+        .sort((a, b) => a.orden - b.orden)
+        .map((c) => ({ value: c.valor, label: c.valor }));
+      if (items.length === 0) return null;
+      const withEmpty = [{ value: '', label: '—' }, ...items];
+      if (row.skill && !withEmpty.some((o) => o.value === row.skill)) {
+        withEmpty.push({ value: row.skill, label: row.skill });
+      }
+      return withEmpty;
+    }
+
+    if (field === 'actividad') {
+      const frontCfg = FRONT_CONFIGS.find((f) => f.id === row.frente);
+      if (!frontCfg?.hasActivityDropdown) return null;
+      const items = catalogs
+        .filter(
+          (c) =>
+            c.tipo === 'ACTIVIDAD' &&
+            c.activo &&
+            c.frente === row.frente &&
+            matchesGroupCatalog(c.grupo, rowGroup),
+        )
+        .sort((a, b) => a.orden - b.orden)
+        .map((c) => ({ value: c.valor, label: c.valor }));
+      if (items.length === 0) return null;
+      const withEmpty = [{ value: '', label: '—' }, ...items];
+      if (row.actividad && !withEmpty.some((o) => o.value === row.actividad)) {
+        withEmpty.push({ value: row.actividad, label: row.actividad });
+      }
+      return withEmpty;
+    }
+
+    return null;
+  };
+
+  const renderEditableCell = (
+    row: TurnRow,
+    field: EditableTurnField,
+    rowGroup: OperalogGroup,
+    tdClassName: string,
+    displayContent: React.ReactNode,
+  ) => {
+    const isCurrentlyEditing =
+      editingCell?.rowId === row.id && editingCell?.field === field;
+    const isCellEditedToday = Boolean(
+      canEditToday && row.admin_edited_fields?.includes(field),
+    );
+    const label = fieldLabelMap[field];
+    const selectOptions = isCurrentlyEditing
+      ? getSelectOptions(row, field, rowGroup)
+      : null;
+
+    return (
+      <td
+        data-admin-edited={isCellEditedToday ? 'true' : undefined}
+        title={
+          isCellEditedToday
+            ? `Editado por ${row.updated_by || 'ADMIN'}${isEditable ? ' (clic para editar)' : ''}`
+            : isEditable
+              ? `Clic para editar ${label}`
+              : undefined
+        }
+        onClick={
+          isEditable && !isCurrentlyEditing
+            ? () => startEditing(row, field)
+            : undefined
+        }
+        className={`${tdClassName} ${
+          isEditable && !isCurrentlyEditing
+            ? 'group/cell cursor-pointer hover:bg-amber-50/70 transition-colors'
+            : ''
+        }`}
+        style={
+          isCellEditedToday
+            ? { backgroundColor: 'rgba(254, 240, 138, 0.72)' }
+            : undefined
+        }
+      >
+        {isCurrentlyEditing ? (
+          <div
+            className="flex items-center gap-1 min-w-[120px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {selectOptions ? (
+              <select
+                aria-label={`Editar ${label}`}
+                autoFocus
+                disabled={savingCell}
+                value={draftValue}
+                onChange={(e) => setDraftValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void commitEditing(row, field);
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelEditing();
+                  }
+                }}
+                className="w-full px-1.5 py-1 text-xs rounded border bg-white outline-none focus:ring-2 focus:ring-[#3C5A9F]/30"
+                style={{ borderColor: 'var(--pluz-primary)', color: 'var(--pluz-ink)' }}
+              >
+                {selectOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                aria-label={`Editar ${label}`}
+                autoFocus
+                disabled={savingCell}
+                value={draftValue}
+                onChange={(e) => setDraftValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void commitEditing(row, field);
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelEditing();
+                  }
+                }}
+                className="w-full px-1.5 py-1 text-xs rounded border bg-white outline-none focus:ring-2 focus:ring-[#3C5A9F]/30"
+                style={{ borderColor: 'var(--pluz-primary)', color: 'var(--pluz-ink)' }}
+              />
+            )}
+            <button
+              type="button"
+              aria-label={`Guardar ${label}`}
+              disabled={savingCell}
+              onClick={() => void commitEditing(row, field)}
+              className="p-1 rounded text-white cursor-pointer shrink-0 disabled:opacity-50"
+              style={{ backgroundColor: 'var(--pluz-primary)' }}
+            >
+              {savingCell ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Check className="w-3 h-3" />
+              )}
+            </button>
+            <button
+              type="button"
+              aria-label={`Cancelar ${label}`}
+              disabled={savingCell}
+              onClick={cancelEditing}
+              className="p-1 rounded border bg-white text-slate-500 hover:text-slate-800 cursor-pointer shrink-0 disabled:opacity-50"
+              style={{ borderColor: 'var(--pluz-border)' }}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-1.5 w-full justify-between">
+            <span>{displayContent}</span>
+            {isEditable && (
+              <Pencil
+                aria-hidden="true"
+                className="w-3 h-3 shrink-0 opacity-0 group-hover/cell:opacity-65 transition-opacity"
+                style={{ color: 'var(--pluz-primary)' }}
+              />
+            )}
+          </div>
+        )}
+      </td>
+    );
+  };
+
   return (
     <div className="space-y-4">
       {/* Control Bar */}
@@ -458,9 +765,23 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
           style={{ borderColor: 'var(--pluz-border)' }}
         >
           <span className="inline-flex items-center gap-1 text-xs font-semibold mr-1" style={{ color: 'var(--pluz-muted)' }}>
-            <Eye className="w-3.5 h-3.5" />
-            Cumplimiento del día (Solo lectura):
+            {isEditable ? <Pencil className="w-3.5 h-3.5" style={{ color: 'var(--pluz-primary)' }} /> : <Eye className="w-3.5 h-3.5" />}
+            {isEditable
+              ? 'Cumplimiento del día (clic en una celda para corregir):'
+              : 'Cumplimiento del día (Solo lectura):'}
           </span>
+          {hasAdminEditedToday && (
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border"
+              style={{
+                backgroundColor: 'rgba(254, 240, 138, 0.72)',
+                borderColor: 'rgba(217, 119, 6, 0.35)',
+                color: '#92400E',
+              }}
+            >
+              Editado por Admin hoy
+            </span>
+          )}
           {complianceByContrata.map((item) => {
             const isSelected = selectedContratas.includes(item.name);
             return (
@@ -569,7 +890,10 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
               <tbody className="divide-y" style={{ borderColor: 'var(--pluz-border)' }}>
                 {sortedRows.map((row) => {
                   const rowGroup = resolveRowGroup(row);
-                  const groupStyle = GROUP_BADGE_STYLES[rowGroup];
+                  const groupStyle = GROUP_BADGE_STYLES[rowGroup] ?? {
+                    bg: 'rgba(60, 90, 159, 0.1)',
+                    color: '#3C5A9F',
+                  };
                   return (
                     <tr key={row.id} className="hover:bg-slate-50/70">
                       <td className="py-2 px-3 font-semibold text-xs" style={{ color: 'var(--pluz-primary)' }}>
@@ -586,41 +910,79 @@ export const AdminTurnsView: React.FC<AdminTurnsViewProps> = ({
                           {rowGroup}
                         </span>
                       </td>
-                      <td className="py-2 px-3 text-xs font-medium" style={{ color: 'var(--pluz-ink)' }}>
-                        {frontLabelMap.get(row.frente) ?? row.frente}
-                      </td>
-                    <td className="py-2 px-3 font-medium" style={{ color: 'var(--pluz-ink)' }}>
-                      {row.nombres}
-                    </td>
-                    <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--pluz-muted)' }}>
-                      {row.usuario_ssam || '—'}
-                    </td>
-                    <td className="py-2 px-3 font-mono text-xs" style={{ color: 'var(--pluz-muted)' }}>
-                      {row.celular || '—'}
-                    </td>
-                    <td className="py-2 px-3 text-xs" style={{ color: 'var(--pluz-ink)' }}>
-                      {row.actividad || '—'}
-                    </td>
-                    <td className="py-2 px-3 text-xs" style={{ color: 'var(--pluz-ink)' }}>
-                      {row.skill || '—'}
-                    </td>
-                    <td className="py-2 px-3">
-                      {row.horario ? (
-                        <span
-                          className="inline-block px-2 py-0.5 rounded text-xs font-medium"
-                          style={{
-                            backgroundColor: 'rgba(60, 90, 159, 0.08)',
-                            color: 'var(--pluz-primary)',
-                          }}
-                        >
-                          {row.horario}
-                        </span>
-                      ) : (
-                        <span className="text-xs font-semibold" style={{ color: 'var(--pluz-danger)' }}>
-                          Sin horario
-                        </span>
+                      {renderEditableCell(
+                        row,
+                        'frente',
+                        rowGroup,
+                        'py-2 px-3 text-xs font-medium',
+                        <span style={{ color: 'var(--pluz-ink)' }}>
+                          {frontLabelMap.get(row.frente) ?? row.frente}
+                        </span>,
                       )}
-                    </td>
+                      {renderEditableCell(
+                        row,
+                        'nombres',
+                        rowGroup,
+                        'py-2 px-3 font-medium',
+                        <span style={{ color: 'var(--pluz-ink)' }}>{row.nombres}</span>,
+                      )}
+                      {renderEditableCell(
+                        row,
+                        'usuario_ssam',
+                        rowGroup,
+                        'py-2 px-3 font-mono text-xs',
+                        <span style={{ color: 'var(--pluz-muted)' }}>
+                          {row.usuario_ssam || '—'}
+                        </span>,
+                      )}
+                      {renderEditableCell(
+                        row,
+                        'celular',
+                        rowGroup,
+                        'py-2 px-3 font-mono text-xs',
+                        <span style={{ color: 'var(--pluz-muted)' }}>
+                          {row.celular || '—'}
+                        </span>,
+                      )}
+                      {renderEditableCell(
+                        row,
+                        'actividad',
+                        rowGroup,
+                        'py-2 px-3 text-xs',
+                        <span style={{ color: 'var(--pluz-ink)' }}>
+                          {row.actividad || '—'}
+                        </span>,
+                      )}
+                      {renderEditableCell(
+                        row,
+                        'skill',
+                        rowGroup,
+                        'py-2 px-3 text-xs',
+                        <span style={{ color: 'var(--pluz-ink)' }}>
+                          {row.skill || '—'}
+                        </span>,
+                      )}
+                      {renderEditableCell(
+                        row,
+                        'horario',
+                        rowGroup,
+                        'py-2 px-3',
+                        row.horario ? (
+                          <span
+                            className="inline-block px-2 py-0.5 rounded text-xs font-medium"
+                            style={{
+                              backgroundColor: 'rgba(60, 90, 159, 0.08)',
+                              color: 'var(--pluz-primary)',
+                            }}
+                          >
+                            {row.horario}
+                          </span>
+                        ) : (
+                          <span className="text-xs font-semibold" style={{ color: 'var(--pluz-danger)' }}>
+                            Sin horario
+                          </span>
+                        ),
+                      )}
                     </tr>
                   );
                 })}

@@ -1,6 +1,8 @@
 import {
   CatalogItem,
   ContrataMeta,
+  EDITABLE_TURN_FIELDS,
+  EditableTurnField,
   FrontType,
   OperalogGroup,
   TurnRow,
@@ -8,6 +10,8 @@ import {
   UserSession,
   matchesGroupCatalog,
   normalizeGroup,
+  parseAdminEditedFields,
+  parseUserGroups,
 } from '../types/operalog';
 
 const GAS_URL =
@@ -607,6 +611,16 @@ export async function getContratas(grupo?: UserGroupScope): Promise<string[]> {
   return contratas;
 }
 
+function normalizeTurnRow(row: TurnRow): TurnRow {
+  const rawEdited = (row as unknown as { admin_edited_fields?: string | string[] | null })
+    .admin_edited_fields;
+  const parsedEdited = parseAdminEditedFields(rawEdited);
+  return {
+    ...row,
+    ...(parsedEdited.length > 0 ? { admin_edited_fields: parsedEdited } : { admin_edited_fields: [] }),
+  };
+}
+
 export async function getTurn(
   fecha: string,
   contratista: string,
@@ -616,10 +630,12 @@ export async function getTurn(
   if (isDemoMode()) {
     const all = readLocalTurns();
     return all
-      .map((row) => ({
-        ...row,
-        grupo: (row.grupo ?? DEMO_CONTRATA_GROUP_MAP.get(row.contratista) ?? 'BT') as OperalogGroup,
-      }))
+      .map((row) =>
+        normalizeTurnRow({
+          ...row,
+          grupo: (row.grupo ?? DEMO_CONTRATA_GROUP_MAP.get(row.contratista) ?? 'BT') as OperalogGroup,
+        }),
+      )
       .filter((row) => {
         if (row.fecha !== fecha) return false;
         if (grupo && grupo !== 'ALL' && row.grupo !== grupo) return false;
@@ -631,7 +647,8 @@ export async function getTurn(
   const params: Record<string, string> = { fecha, contratista, rol };
   if (grupo) params.grupo = grupo;
   const res = await gasGet<TurnRow[] | { rows?: TurnRow[] }>('getTurn', params);
-  return Array.isArray(res) ? res : (res.rows ?? []);
+  const rows = Array.isArray(res) ? res : (res.rows ?? []);
+  return rows.map(normalizeTurnRow);
 }
 
 export async function getTurnsRange(
@@ -644,10 +661,12 @@ export async function getTurnsRange(
   if (isDemoMode()) {
     const all = readLocalTurns();
     return all
-      .map((row) => ({
-        ...row,
-        grupo: (row.grupo ?? DEMO_CONTRATA_GROUP_MAP.get(row.contratista) ?? 'BT') as OperalogGroup,
-      }))
+      .map((row) =>
+        normalizeTurnRow({
+          ...row,
+          grupo: (row.grupo ?? DEMO_CONTRATA_GROUP_MAP.get(row.contratista) ?? 'BT') as OperalogGroup,
+        }),
+      )
       .filter((row) => {
         if (!row.fecha) return false;
         if (fechaInicio && row.fecha < fechaInicio) return false;
@@ -666,7 +685,8 @@ export async function getTurnsRange(
   };
   if (grupo) params.grupo = grupo;
   const res = await gasGet<TurnRow[] | { rows?: TurnRow[] }>('getTurnsRange', params);
-  return Array.isArray(res) ? res : (res.rows ?? []);
+  const rows = Array.isArray(res) ? res : (res.rows ?? []);
+  return rows.map(normalizeTurnRow);
 }
 
 export async function getLastTurn(fecha: string, contratista: string): Promise<TurnRow[]> {
@@ -735,6 +755,122 @@ export async function saveTurn(
     usuario: payload.usuario ?? '',
     grupo: payload.grupo,
   });
+}
+
+export interface UpdateTurnRowPayload {
+  id: string;
+  fecha: string;
+  contratista: string;
+  changes: Partial<Record<EditableTurnField, string>>;
+  usuario: string;
+  rol: 'ADMIN' | 'CONTRATA';
+  userGrupo?: UserGroupScope;
+}
+
+export async function updateTurnRow(
+  payload: UpdateTurnRowPayload,
+): Promise<{ ok: boolean; row: TurnRow; changedFields: EditableTurnField[] }> {
+  if (payload.rol !== 'ADMIN') {
+    throw new Error('Solo usuarios con rol ADMIN pueden editar registros.');
+  }
+
+  const today = getTodayIsoDate();
+  if (payload.fecha !== today) {
+    throw new Error('Solo se pueden editar registros del día de hoy.');
+  }
+
+  const sanitizedChanges: Partial<Record<EditableTurnField, string>> = {};
+  for (const field of EDITABLE_TURN_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(payload.changes, field)) {
+      sanitizedChanges[field] = String(payload.changes[field] ?? '').trim();
+    }
+  }
+
+  if (Object.keys(sanitizedChanges).length === 0) {
+    throw new Error('No se indicaron campos válidos para actualizar.');
+  }
+
+  if (isDemoMode()) {
+    const all = readLocalTurns();
+    const targetIdx = all.findIndex(
+      (r) =>
+        r.id === payload.id &&
+        r.fecha === payload.fecha &&
+        r.contratista === payload.contratista,
+    );
+    if (targetIdx === -1) {
+      throw new Error('No se encontró el registro a actualizar.');
+    }
+
+    const existing = all[targetIdx];
+    const rowGroup = normalizeGroup(
+      existing.grupo ?? DEMO_CONTRATA_GROUP_MAP.get(existing.contratista) ?? 'BT',
+      'BT',
+    );
+    const allowedGroups = parseUserGroups(payload.userGrupo, 'ALL');
+    if (
+      payload.userGrupo &&
+      normalizeGroup(payload.userGrupo, 'ALL') !== 'ALL' &&
+      !allowedGroups.includes(rowGroup)
+    ) {
+      throw new Error(`No tienes permiso para editar registros del grupo ${rowGroup}.`);
+    }
+
+    const changedFields: EditableTurnField[] = [];
+    const updatedRow: TurnRow = { ...existing, grupo: rowGroup };
+
+    for (const [key, nextVal] of Object.entries(sanitizedChanges) as [
+      EditableTurnField,
+      string,
+    ][]) {
+      const prevVal = String(existing[key] ?? '').trim();
+      if (prevVal !== nextVal) {
+        if (key === 'frente') {
+          updatedRow.frente = nextVal as FrontType;
+        } else {
+          updatedRow[key] = nextVal;
+        }
+        changedFields.push(key);
+      }
+    }
+
+    if (changedFields.length === 0) {
+      return { ok: true, row: normalizeTurnRow(updatedRow), changedFields: [] };
+    }
+
+    const mergedEdited = parseAdminEditedFields([
+      ...parseAdminEditedFields(existing.admin_edited_fields),
+      ...changedFields,
+    ]);
+    updatedRow.admin_edited_fields = mergedEdited;
+    updatedRow.updated_at = new Date().toISOString();
+    updatedRow.updated_by = payload.usuario;
+
+    const nextAll = [...all];
+    nextAll[targetIdx] = updatedRow;
+    writeLocalTurns(nextAll);
+
+    return { ok: true, row: normalizeTurnRow(updatedRow), changedFields };
+  }
+
+  const res = await gasPost<{
+    ok: boolean;
+    row: TurnRow;
+    changedFields?: EditableTurnField[];
+  }>('updateTurnRow', {
+    id: payload.id,
+    fecha: payload.fecha,
+    contratista: payload.contratista,
+    changes: sanitizedChanges,
+    usuario: payload.usuario,
+    rol: payload.rol,
+  });
+
+  return {
+    ok: res.ok !== false,
+    row: normalizeTurnRow(res.row),
+    changedFields: parseAdminEditedFields(res.changedFields ?? []),
+  };
 }
 
 export interface SaveCatalogPayload {

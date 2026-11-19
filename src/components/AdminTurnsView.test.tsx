@@ -172,3 +172,102 @@ describe('AdminTurnsView multi-select filters and table sorting', () => {
     expect(passedMap).toBe(contrataGroupMap);
   });
 });
+
+describe('AdminTurnsView inline cell editing and yellow highlight', () => {
+  it('allows single-click inline edit on editable cells today and saves on Enter', async () => {
+    const onUpdateCell = vi.fn().mockResolvedValue(undefined);
+    render(
+      <AdminTurnsView
+        fecha="2026-11-19"
+        onFechaChange={vi.fn()}
+        contratas={['ALFA', 'BETA', 'GAMMA']}
+        rows={sampleRows}
+        loading={false}
+        onRefresh={vi.fn()}
+        selectedContrata="ALL"
+        onSelectedContrataChange={vi.fn()}
+        onToast={vi.fn()}
+        canEditToday={true}
+        onUpdateCell={onUpdateCell}
+      />,
+    );
+
+    // Contratista and Grupo are NOT editable
+    fireEvent.click(screen.getByText('ALFA'));
+    expect(screen.queryByRole('textbox', { name: /Editar/i })).toBeNull();
+
+    // Click celular cell of Carlos Zapata -> opens input
+    fireEvent.click(screen.getByText('999111222'));
+    const input = screen.getByRole('textbox', { name: /Editar Celular/i }) as HTMLInputElement;
+    expect(input.value).toBe('999111222');
+
+    // Escape cancels without saving
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: /Editar Celular/i })).toBeNull();
+    expect(onUpdateCell).not.toHaveBeenCalled();
+
+    // Re-open, edit, and press Enter -> calls onUpdateCell
+    fireEvent.click(screen.getByText('999111222'));
+    const editInput = screen.getByRole('textbox', { name: /Editar Celular/i });
+    fireEvent.change(editInput, { target: { value: '999888777' } });
+    fireEvent.keyDown(editInput, { key: 'Enter' });
+
+    await vi.waitFor(() => {
+      expect(onUpdateCell).toHaveBeenCalledWith(sampleRows[0], { celular: '999888777' });
+      expect(screen.queryByRole('textbox', { name: /Editar Celular/i })).toBeNull();
+    });
+  });
+
+  it('highlights admin-edited cells in yellow ONLY when canEditToday is true', () => {
+    const rowsWithEdit: TurnRow[] = [
+      {
+        ...sampleRows[0],
+        updated_by: 'admin.bt',
+        admin_edited_fields: ['celular'],
+      },
+    ];
+
+    const { rerender } = render(
+      <AdminTurnsView
+        fecha="2026-11-19"
+        onFechaChange={vi.fn()}
+        contratas={['ALFA']}
+        rows={rowsWithEdit}
+        loading={false}
+        onRefresh={vi.fn()}
+        selectedContrata="ALL"
+        onSelectedContrataChange={vi.fn()}
+        onToast={vi.fn()}
+        canEditToday={true}
+        onUpdateCell={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    const celularTd = screen.getByText('999111222').closest('td');
+    const nombresTd = screen.getByText('Carlos Zapata').closest('td');
+    expect(celularTd?.getAttribute('data-admin-edited')).toBe('true');
+    expect(nombresTd?.getAttribute('data-admin-edited')).toBeNull();
+
+    // Past date (canEditToday=false) -> no yellow highlight and no inline editor on click
+    rerender(
+      <AdminTurnsView
+        fecha="2026-11-13"
+        onFechaChange={vi.fn()}
+        contratas={['ALFA']}
+        rows={rowsWithEdit}
+        loading={false}
+        onRefresh={vi.fn()}
+        selectedContrata="ALL"
+        onSelectedContrataChange={vi.fn()}
+        onToast={vi.fn()}
+        canEditToday={false}
+        onUpdateCell={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    const pastCelularTd = screen.getByText('999111222').closest('td');
+    expect(pastCelularTd?.getAttribute('data-admin-edited')).toBeNull();
+    fireEvent.click(screen.getByText('999111222'));
+    expect(screen.queryByRole('textbox', { name: /Editar Celular/i })).toBeNull();
+  });
+});
