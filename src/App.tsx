@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { LoginView } from './components/LoginView';
 import { TopNav, type AppTab } from './components/TopNav';
@@ -7,12 +7,14 @@ import { AdminTurnsView } from './components/AdminTurnsView';
 import { AdminCatalogsTab } from './components/AdminCatalogsTab';
 import { ToastContainer } from './components/ui/ToastContainer';
 import {
+  clearSessionDataCache,
   getCatalogs,
-  getContratas,
   getContratasMeta,
   getTodayIsoDate,
   getTurn,
   getTurnsRange,
+  readCachedCatalogs,
+  readCachedContratasMeta,
   updateTurnRow,
 } from './services/gasClient';
 import {
@@ -92,6 +94,7 @@ export default function App() {
   const [adminRangeCache, setAdminRangeCache] = useState<Record<string, TurnRow[]>>({});
   const [adminRangeLoading, setAdminRangeLoading] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const skipNextBootstrapRefreshRef = useRef<boolean>(false);
 
   const addToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
     const id = `toast_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -106,17 +109,33 @@ export default function App() {
   }, []);
 
   const loadBootstrapData = useCallback(async () => {
+    const includeInactive = user?.rol === 'ADMIN';
+    const cachedCats = readCachedCatalogs(includeInactive);
+    const cachedMeta = readCachedContratasMeta();
+
+    if (cachedCats) setCatalogs(cachedCats);
+    if (cachedMeta && cachedMeta.length > 0) {
+      setContratasMeta(cachedMeta);
+      setContratas(cachedMeta.map((m) => m.nombre));
+    }
+
+    const shouldSkipNetwork =
+      skipNextBootstrapRefreshRef.current && cachedCats !== null && cachedMeta !== null;
+    skipNextBootstrapRefreshRef.current = false;
+    if (shouldSkipNetwork) return;
+
     try {
-      const [cats, conts, meta] = await Promise.all([
-        getCatalogs(user?.rol === 'ADMIN'),
-        getContratas(),
-        getContratasMeta(),
+      const [cats, meta] = await Promise.all([
+        getCatalogs(includeInactive, undefined, { forceRefresh: true }),
+        getContratasMeta({ forceRefresh: true }),
       ]);
       setCatalogs(cats);
-      if (conts.length > 0) setContratas(conts);
-      if (meta.length > 0) setContratasMeta(meta);
+      if (meta.length > 0) {
+        setContratasMeta(meta);
+        setContratas(meta.map((m) => m.nombre));
+      }
     } catch {
-      // Silencioso; cada tab maneja su feedback si falla
+      // Silencioso; cada tab maneja su feedback si falla y se conserva el caché hidratado
     }
   }, [user?.rol]);
 
@@ -183,6 +202,7 @@ export default function App() {
   const handleLoginSuccess = useCallback((loggedUser: UserSession) => {
     const today = getTodayIsoDate();
     const allowed = parseUserGroups(loggedUser.grupo, loggedUser.rol === 'ADMIN' ? 'ALL' : 'BT');
+    skipNextBootstrapRefreshRef.current = true;
     setUser(loggedUser);
     setAdminGroupFilter(allowed.length === 1 ? allowed[0] : 'ALL');
     setAdminSelectedContrata('ALL');
@@ -200,6 +220,7 @@ export default function App() {
 
   const handleLogout = useCallback(() => {
     const today = getTodayIsoDate();
+    skipNextBootstrapRefreshRef.current = false;
     setUser(null);
     setIsHistoryUnlocked(false);
     setCurrentRows([]);
@@ -211,6 +232,7 @@ export default function App() {
     setAdminSelectedContrata('ALL');
     setAdminGroupFilter('ALL');
     clearOperationsCache();
+    clearSessionDataCache();
     try {
       sessionStorage.removeItem(SESSION_KEY);
     } catch {

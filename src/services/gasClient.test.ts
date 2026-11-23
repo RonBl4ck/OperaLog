@@ -179,3 +179,127 @@ describe('updateTurnRow', () => {
     expect(fetched[0].admin_edited_fields).toEqual(['celular', 'horario']);
   });
 });
+
+describe('GAS cache-busting and sessionStorage revalidation', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    vi.resetModules();
+    sessionStorage.clear();
+  });
+
+  async function loadLiveGasClient() {
+    vi.resetModules();
+    vi.stubEnv('VITE_GAS_URL', 'https://script.google.com/macros/s/test-deploy/exec');
+    return import('./gasClient');
+  }
+
+  it('appends cache-buster _t and uses cache: no-store on gasGet requests', async () => {
+    const client = await loadLiveGasClient();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ ok: true, rows: [] }),
+    } as Response);
+
+    await client.getTurn('2026-11-23', 'ALL', 'ADMIN');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [calledUrl, init] = fetchSpy.mock.calls[0];
+    const parsedUrl = new URL(String(calledUrl));
+    expect(parsedUrl.searchParams.get('action')).toBe('getTurn');
+    expect(parsedUrl.searchParams.get('_t')).toMatch(/^\d+$/);
+    expect(init).toMatchObject({ method: 'GET', cache: 'no-store' });
+  });
+
+  it('bypasses sessionStorage cache when forceRefresh=true and clears cache on clearSessionDataCache', async () => {
+    const client = await loadLiveGasClient();
+    sessionStorage.setItem(
+      'operalog_cache_catalogs_v2',
+      JSON.stringify([
+        { tipo: 'HORARIO', frente: 'ALL', valor: 'OLD', orden: 1, activo: true, grupo: 'ALL' },
+      ]),
+    );
+    sessionStorage.setItem(
+      'operalog_cache_contratas_meta_v2',
+      JSON.stringify([{ nombre: 'OLD_CONTRATA', grupo: 'BT' }]),
+    );
+    sessionStorage.setItem('operalog_cache_contratas_v2', JSON.stringify(['OLD_CONTRATA']));
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('action=getAllCatalogs')) {
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            catalogs: [
+              { tipo: 'HORARIO', frente: 'ALL', valor: 'FRESH', orden: 1, activo: true, grupo: 'ALL' },
+            ],
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          contratas: ['NEW_CONTRATA'],
+          contratasMeta: [{ nombre: 'NEW_CONTRATA', grupo: 'BT' }],
+        }),
+      } as Response;
+    });
+
+    expect(client.readCachedCatalogs(true)?.[0]?.valor).toBe('OLD');
+    expect(client.readCachedContratasMeta()?.[0]?.nombre).toBe('OLD_CONTRATA');
+
+    const freshCatalogs = await client.getCatalogs(true, undefined, { forceRefresh: true });
+    const freshMeta = await client.getContratasMeta({ forceRefresh: true });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(freshCatalogs[0].valor).toBe('FRESH');
+    expect(freshMeta).toEqual([{ nombre: 'NEW_CONTRATA', grupo: 'BT' }]);
+    expect(JSON.parse(sessionStorage.getItem('operalog_cache_contratas_v2') || '[]')).toEqual([
+      'NEW_CONTRATA',
+    ]);
+
+    client.clearSessionDataCache();
+    expect(sessionStorage.getItem('operalog_cache_catalogs_v2')).toBeNull();
+    expect(sessionStorage.getItem('operalog_cache_contratas_v2')).toBeNull();
+    expect(sessionStorage.getItem('operalog_cache_contratas_meta_v2')).toBeNull();
+  });
+
+  it('merges scoped saveCatalog updates into SESSION_CATALOGS without dropping other groups', async () => {
+    const client = await loadLiveGasClient();
+    sessionStorage.setItem(
+      'operalog_cache_catalogs_v2',
+      JSON.stringify([
+        { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'OLD_BT', orden: 1, activo: true, grupo: 'BT' },
+        { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'KEEP_AP', orden: 1, activo: true, grupo: 'AP' },
+      ]),
+    );
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        items: [
+          { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'NEW_BT', orden: 1, activo: true, grupo: 'BT' },
+        ],
+      }),
+    } as Response);
+
+    await client.saveCatalog({
+      items: [
+        { tipo: 'SKILL', frente: 'RECLAMOS', valor: 'NEW_BT', orden: 1, activo: true, grupo: 'BT' },
+      ],
+      rol: 'ADMIN',
+      usuario: 'admin.bt',
+      grupo: 'BT',
+    });
+
+    const stored = JSON.parse(sessionStorage.getItem('operalog_cache_catalogs_v2') || '[]') as {
+      valor: string;
+      grupo: string;
+    }[];
+    expect(stored.map((item) => item.valor).sort()).toEqual(['KEEP_AP', 'NEW_BT']);
+  });
+});

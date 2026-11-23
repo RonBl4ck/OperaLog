@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { shouldUnlockHistoryByDefault } from './App';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import App, { shouldUnlockHistoryByDefault } from './App';
+import * as gasClient from './services/gasClient';
 
 describe('shouldUnlockHistoryByDefault', () => {
   it('unlocks history automatically only for ADMIN with ver_historico=true', () => {
@@ -37,5 +39,48 @@ describe('shouldUnlockHistoryByDefault', () => {
     ).toBe(false);
 
     expect(shouldUnlockHistoryByDefault(null)).toBe(false);
+  });
+});
+
+describe('App bootstrap revalidation on F5 and logout cleanup', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    sessionStorage.clear();
+  });
+
+  it('revalidates catalogs and contratas with forceRefresh=true on restored session mount and clears session cache on logout', async () => {
+    sessionStorage.setItem(
+      'operalog_user_session_v1',
+      JSON.stringify({
+        usuario: 'admin.pluz',
+        rol: 'ADMIN',
+        contratista: 'ALL',
+        nombre_mostrar: 'Admin General',
+        grupo: 'ALL',
+        ver_historico: true,
+      }),
+    );
+
+    const getCatalogsSpy = vi.spyOn(gasClient, 'getCatalogs').mockResolvedValue([]);
+    const getContratasMetaSpy = vi
+      .spyOn(gasClient, 'getContratasMeta')
+      .mockResolvedValue([{ nombre: 'ALFA', grupo: 'BT' }]);
+    vi.spyOn(gasClient, 'getTurnsRange').mockResolvedValue([]);
+    vi.spyOn(gasClient, 'getPublicUsers').mockResolvedValue([]);
+    const clearCacheSpy = vi.spyOn(gasClient, 'clearSessionDataCache');
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(getCatalogsSpy).toHaveBeenCalledWith(true, undefined, { forceRefresh: true });
+      expect(getContratasMetaSpy).toHaveBeenCalledWith({ forceRefresh: true });
+    });
+
+    const logoutBtn = screen.getByTitle('Cerrar sesión');
+    fireEvent.click(logoutBtn);
+
+    expect(clearCacheSpy).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem('operalog_user_session_v1')).toBeNull();
   });
 });

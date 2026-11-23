@@ -373,14 +373,59 @@ function writeLocalTurns(rows: TurnRow[]): void {
   }
 }
 
+export interface GasReadOptions {
+  forceRefresh?: boolean;
+}
+
+export function clearSessionDataCache(): void {
+  try {
+    sessionStorage.removeItem(STORAGE_KEYS.SESSION_CATALOGS);
+    sessionStorage.removeItem(STORAGE_KEYS.SESSION_CONTRATAS);
+    sessionStorage.removeItem(STORAGE_KEYS.SESSION_CONTRATAS_META);
+  } catch {
+    // Ignore sessionStorage errors
+  }
+}
+
+export function readCachedCatalogs(
+  includeInactive = false,
+  grupo?: UserGroupScope,
+): CatalogItem[] | null {
+  if (isDemoMode()) return null;
+  try {
+    const cached = sessionStorage.getItem(STORAGE_KEYS.SESSION_CATALOGS);
+    if (!cached) return null;
+    const parsed = JSON.parse(cached) as CatalogItem[];
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter(
+      (c) => (includeInactive || c.activo) && matchesGroupCatalog(c.grupo, grupo),
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function readCachedContratasMeta(): ContrataMeta[] | null {
+  if (isDemoMode()) return null;
+  try {
+    const cached = sessionStorage.getItem(STORAGE_KEYS.SESSION_CONTRATAS_META);
+    if (!cached) return null;
+    const parsed = JSON.parse(cached) as ContrataMeta[];
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 async function gasGet<T>(action: string, params: Record<string, string> = {}): Promise<T> {
   const url = new URL(GAS_URL);
   url.searchParams.set('action', action);
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
   }
+  url.searchParams.set('_t', String(Date.now()));
 
-  const res = await fetch(url.toString(), { method: 'GET' });
+  const res = await fetch(url.toString(), { method: 'GET', cache: 'no-store' });
   if (!res.ok) {
     throw new Error(`Error HTTP ${res.status} al consultar GAS (${action})`);
   }
@@ -491,6 +536,7 @@ export async function login(usuario: string, pin: string): Promise<UserSession> 
 export async function getCatalogs(
   includeInactive = false,
   grupo?: UserGroupScope,
+  options?: GasReadOptions,
 ): Promise<CatalogItem[]> {
   if (isDemoMode()) {
     const all = readLocalCatalogs();
@@ -499,16 +545,11 @@ export async function getCatalogs(
     );
   }
 
-  try {
-    const cached = sessionStorage.getItem(STORAGE_KEYS.SESSION_CATALOGS);
-    if (cached) {
-      const parsed = JSON.parse(cached) as CatalogItem[];
-      return parsed.filter(
-        (c) => (includeInactive || c.activo) && matchesGroupCatalog(c.grupo, grupo),
-      );
+  if (!options?.forceRefresh) {
+    const cached = readCachedCatalogs(includeInactive, grupo);
+    if (cached !== null) {
+      return cached;
     }
-  } catch {
-    // Ignore sessionStorage read error
   }
 
   const action = includeInactive ? 'getAllCatalogs' : 'getCatalogs';
@@ -541,18 +582,16 @@ export async function refreshAllCatalogs(): Promise<CatalogItem[]> {
   return catalogs;
 }
 
-export async function getContratasMeta(): Promise<ContrataMeta[]> {
+export async function getContratasMeta(options?: GasReadOptions): Promise<ContrataMeta[]> {
   if (isDemoMode()) {
     return [...DEMO_CONTRATAS_META];
   }
 
-  try {
-    const cached = sessionStorage.getItem(STORAGE_KEYS.SESSION_CONTRATAS_META);
-    if (cached) {
-      return JSON.parse(cached) as ContrataMeta[];
+  if (!options?.forceRefresh) {
+    const cached = readCachedContratasMeta();
+    if (cached !== null) {
+      return cached;
     }
-  } catch {
-    // Ignore sessionStorage read error
   }
 
   const res = await gasGet<{ contratas?: string[]; contratasMeta?: ContrataMeta[] }>(
@@ -563,13 +602,20 @@ export async function getContratasMeta(): Promise<ContrataMeta[]> {
     : (res.contratas ?? []).map((nombre) => ({ nombre, grupo: 'BT' }));
   try {
     sessionStorage.setItem(STORAGE_KEYS.SESSION_CONTRATAS_META, JSON.stringify(meta));
+    sessionStorage.setItem(
+      STORAGE_KEYS.SESSION_CONTRATAS,
+      JSON.stringify(meta.map((m) => m.nombre)),
+    );
   } catch {
     // Ignore sessionStorage write error
   }
   return meta;
 }
 
-export async function getContratas(grupo?: UserGroupScope): Promise<string[]> {
+export async function getContratas(
+  grupo?: UserGroupScope,
+  options?: GasReadOptions,
+): Promise<string[]> {
   if (isDemoMode()) {
     const filtered =
       grupo && grupo !== 'ALL'
@@ -578,7 +624,7 @@ export async function getContratas(grupo?: UserGroupScope): Promise<string[]> {
     return filtered.map((c) => c.nombre);
   }
 
-  if (!grupo || grupo === 'ALL') {
+  if (!options?.forceRefresh && (!grupo || grupo === 'ALL')) {
     try {
       const cached = sessionStorage.getItem(STORAGE_KEYS.SESSION_CONTRATAS);
       if (cached) {
@@ -915,7 +961,26 @@ export async function saveCatalog(
   });
   const updated = result.items ?? items;
   try {
-    sessionStorage.setItem(STORAGE_KEYS.SESSION_CATALOGS, JSON.stringify(updated));
+    const normalizedTarget = grupo ? normalizeGroup(grupo, 'ALL') : 'ALL';
+    if (normalizedTarget && normalizedTarget !== 'ALL') {
+      const rawExisting = sessionStorage.getItem(STORAGE_KEYS.SESSION_CATALOGS);
+      if (rawExisting) {
+        const existing = JSON.parse(rawExisting) as CatalogItem[];
+        if (Array.isArray(existing)) {
+          const otherGroups = existing.filter(
+            (c) => normalizeGroup(c.grupo, c.tipo === 'HORARIO' ? 'ALL' : 'BT') !== normalizedTarget,
+          );
+          sessionStorage.setItem(
+            STORAGE_KEYS.SESSION_CATALOGS,
+            JSON.stringify([...otherGroups, ...updated]),
+          );
+        } else {
+          sessionStorage.removeItem(STORAGE_KEYS.SESSION_CATALOGS);
+        }
+      }
+    } else {
+      sessionStorage.setItem(STORAGE_KEYS.SESSION_CATALOGS, JSON.stringify(updated));
+    }
   } catch {
     // Ignore sessionStorage write error
   }
