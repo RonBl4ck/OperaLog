@@ -419,7 +419,7 @@ export const OperationsTab: React.FC<OperationsTabProps> = ({
             onClick={() => void downloadGeneralExcelTemplate(groupCatalogs, activeGroup)}
             disabled={loadingTurn || saving}
             className="tactile-btn inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            title="Descargar plantilla Excel general (Despachadores, Reclamos, Teko y Reparaciones con desplegables)"
+            title="Descargar plantilla Excel general con todos los frentes activos y desplegables"
           >
             <Download className="w-4 h-4 text-slate-500" />
             <span>Plantilla general</span>

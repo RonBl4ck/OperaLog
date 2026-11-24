@@ -74,10 +74,13 @@ describe('excelTemplate', () => {
     });
   });
 
-  it('builds general 4-sheet workbook with dropdowns and only returns non-empty sheets on parse', async () => {
+  it('builds general workbook with all active fronts including Coordinadores, Supervisores CAPA, and Localizadores and only returns non-empty sheets on parse', async () => {
     const wb = buildGeneralExcelTemplateWorkbook(sampleCatalogs);
     const sheetNames = wb.worksheets.map((ws) => ws.name);
     expect(sheetNames).toEqual([
+      'Coordinadores',
+      'Supervisores CAPA',
+      'Localizadores',
       'Despachadores',
       'Reclamos',
       'Teko',
@@ -85,11 +88,23 @@ describe('excelTemplate', () => {
       'Catalogos',
     ]);
 
+    const coordSheet = wb.getWorksheet('Coordinadores')!;
+    expect(coordSheet.getCell('C2').dataValidation?.type).toBe('list');
+    coordSheet.addRow(['Pedro Gomez', '911000111', '07:00 - 15:00']);
+
+    const capaSheet = wb.getWorksheet('Supervisores CAPA')!;
+    expect(capaSheet.getCell('C2').dataValidation?.type).toBe('list');
+    capaSheet.addRow(['Rosa Diaz', '922000222', '15:00 - 23:00']);
+
+    const locSheet = wb.getWorksheet('Localizadores')!;
+    expect(locSheet.getCell('C2').dataValidation?.type).toBe('list');
+    locSheet.addRow(['Marco Silva', '933000333', '07:00 - 15:00']);
+
     const reclamosSheet = wb.getWorksheet('Reclamos')!;
     expect(reclamosSheet.getCell('D2').dataValidation?.type).toBe('list');
     expect(reclamosSheet.getCell('E2').dataValidation?.type).toBe('list');
 
-    // Fill only Reclamos and Teko; leave Despachadores and Reparaciones empty
+    // Fill Coordinadores, Supervisores CAPA, Localizadores, Reclamos, and Teko; leave Despachadores and Reparaciones empty
     reclamosSheet.addRow([
       'Carlos Ruiz',
       'CRUIZ',
@@ -107,9 +122,42 @@ describe('excelTemplate', () => {
       sampleCatalogs,
     );
 
-    expect(Object.keys(parsedByFront)).toEqual(['RECLAMOS', 'TEKO']);
+    expect(Object.keys(parsedByFront)).toEqual([
+      'COORDINADORES',
+      'SUPERVISORES CAPA',
+      'LOCALIZADORES',
+      'RECLAMOS',
+      'TEKO',
+    ]);
     expect(parsedByFront.DESPACHADORES).toBeUndefined();
     expect(parsedByFront.REPARACIONES).toBeUndefined();
+
+    expect(parsedByFront.COORDINADORES).toHaveLength(1);
+    expect(parsedByFront.COORDINADORES![0]).toMatchObject({
+      frente: 'COORDINADORES',
+      nombres: 'Pedro Gomez',
+      usuario_ssam: '',
+      celular: '911000111',
+      actividad: '',
+      skill: '',
+      horario: '07:00 - 15:00',
+    });
+
+    expect(parsedByFront['SUPERVISORES CAPA']).toHaveLength(1);
+    expect(parsedByFront['SUPERVISORES CAPA']![0]).toMatchObject({
+      frente: 'SUPERVISORES CAPA',
+      nombres: 'Rosa Diaz',
+      celular: '922000222',
+      horario: '15:00 - 23:00',
+    });
+
+    expect(parsedByFront.LOCALIZADORES).toHaveLength(1);
+    expect(parsedByFront.LOCALIZADORES![0]).toMatchObject({
+      frente: 'LOCALIZADORES',
+      nombres: 'Marco Silva',
+      celular: '933000333',
+      horario: '07:00 - 15:00',
+    });
 
     expect(parsedByFront.RECLAMOS).toHaveLength(1);
     expect(parsedByFront.RECLAMOS![0]).toMatchObject({

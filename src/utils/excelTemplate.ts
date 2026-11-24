@@ -275,7 +275,7 @@ export function buildExcelTemplateWorkbook(
   return wb;
 }
 
-/** Builds a general multi-sheet ExcelJS workbook for all template-enabled fronts. */
+/** Builds a general multi-sheet ExcelJS workbook for all active fronts. */
 export function buildGeneralExcelTemplateWorkbook(
   catalogs: CatalogItem[],
   grupo?: UserGroupScope,
@@ -283,9 +283,7 @@ export function buildGeneralExcelTemplateWorkbook(
   const wb = new ExcelJS.Workbook();
   const pendingCols: PendingCatalogColumn[] = [];
 
-  const templateFronts = getActiveFrontConfigs(catalogs, grupo).filter(
-    (f) => f.supportsExcelTemplate,
-  );
+  const templateFronts = getActiveFrontConfigs(catalogs, grupo);
   for (const front of templateFronts) {
     appendFrontSheet(wb, pendingCols, front, catalogs, grupo);
   }
@@ -323,7 +321,7 @@ export async function downloadExcelTemplate(
   await triggerWorkbookDownload(wb, `Plantilla_${slug}.xlsx`);
 }
 
-/** Downloads the general 4-sheet Excel template with dropdowns for all operational fronts. */
+/** Downloads the general multi-sheet Excel template with dropdowns for all active fronts. */
 export async function downloadGeneralExcelTemplate(
   catalogs: CatalogItem[],
   grupo?: UserGroupScope,
@@ -442,9 +440,7 @@ export function parseGeneralExcelWorkbook(
 ): Partial<Record<FrontType, TurnRow[]>> {
   const wb = XLSX.read(data, { type: 'array' });
   const result: Partial<Record<FrontType, TurnRow[]>> = {};
-  const templateFronts = getActiveFrontConfigs(catalogs, grupo).filter(
-    (f) => f.supportsExcelTemplate,
-  );
+  const templateFronts = getActiveFrontConfigs(catalogs, grupo);
 
   for (const front of templateFronts) {
     const targetTokens = new Set([
