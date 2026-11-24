@@ -83,4 +83,49 @@ describe('App bootstrap revalidation on F5 and logout cleanup', () => {
     expect(clearCacheSpy).toHaveBeenCalledTimes(1);
     expect(sessionStorage.getItem('operalog_user_session_v1')).toBeNull();
   });
+
+  it('refreshes stale user groups in sessionStorage on reload (Ctrl+F5) from live Usuarios_Contratas', async () => {
+    sessionStorage.setItem(
+      'operalog_user_session_v1',
+      JSON.stringify({
+        usuario: 'PLUZ',
+        rol: 'ADMIN',
+        contratista: 'PLUZ',
+        nombre_mostrar: 'PLUZ',
+        grupo: 'BT,AP',
+        ver_historico: false,
+      }),
+    );
+
+    vi.spyOn(gasClient, 'getCatalogs').mockResolvedValue([]);
+    vi.spyOn(gasClient, 'getContratasMeta').mockResolvedValue([
+      { nombre: 'ALFA', grupo: 'BT' },
+      { nombre: 'NORTE', grupo: 'BT-N' },
+    ]);
+    vi.spyOn(gasClient, 'getTurnsRange').mockResolvedValue([]);
+    vi.spyOn(gasClient, 'getPublicUsers').mockResolvedValue([
+      {
+        usuario: 'PLUZ',
+        rol: 'ADMIN',
+        contratista: 'PLUZ',
+        nombre_mostrar: 'PLUZ',
+        grupo: 'BT,BT-N',
+        ver_historico: false,
+      },
+    ]);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/ADMIN · BT · BT-N/i)).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('button', { name: 'AP' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'BT-N' })).toBeTruthy();
+
+    const persisted = JSON.parse(sessionStorage.getItem('operalog_user_session_v1') || '{}') as {
+      grupo?: string;
+    };
+    expect(persisted.grupo).toBe('BT,BT-N');
+  });
 });

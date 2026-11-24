@@ -464,6 +464,7 @@ export interface PublicUserOption {
   contratista: string;
   nombre_mostrar: string;
   grupo?: UserGroupScope;
+  ver_historico?: boolean;
 }
 
 export async function getPublicUsers(): Promise<PublicUserOption[]> {

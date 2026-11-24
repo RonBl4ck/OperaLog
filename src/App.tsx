@@ -10,6 +10,7 @@ import {
   clearSessionDataCache,
   getCatalogs,
   getContratasMeta,
+  getPublicUsers,
   getTodayIsoDate,
   getTurn,
   getTurnsRange,
@@ -95,6 +96,8 @@ export default function App() {
   const [adminRangeLoading, setAdminRangeLoading] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const skipNextBootstrapRefreshRef = useRef<boolean>(false);
+  const userRef = useRef<UserSession | null>(user);
+  userRef.current = user;
 
   const addToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
     const id = `toast_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -109,7 +112,10 @@ export default function App() {
   }, []);
 
   const loadBootstrapData = useCallback(async () => {
-    const includeInactive = user?.rol === 'ADMIN';
+    const currentUser = userRef.current;
+    if (!currentUser) return;
+
+    const includeInactive = currentUser.rol === 'ADMIN';
     const cachedCats = readCachedCatalogs(includeInactive);
     const cachedMeta = readCachedContratasMeta();
 
@@ -125,25 +131,88 @@ export default function App() {
     if (shouldSkipNetwork) return;
 
     try {
-      const [cats, meta] = await Promise.all([
+      const [cats, meta, publicUsers] = await Promise.all([
         getCatalogs(includeInactive, undefined, { forceRefresh: true }),
         getContratasMeta({ forceRefresh: true }),
+        getPublicUsers(),
       ]);
       setCatalogs(cats);
       if (meta.length > 0) {
         setContratasMeta(meta);
         setContratas(meta.map((m) => m.nombre));
       }
+
+      if (publicUsers.length > 0) {
+        const freshUser = publicUsers.find(
+          (u) => u.usuario.trim().toLowerCase() === currentUser.usuario.trim().toLowerCase(),
+        );
+        if (!freshUser) {
+          clearOperationsCache();
+          clearSessionDataCache();
+          try {
+            sessionStorage.removeItem(SESSION_KEY);
+          } catch {
+            // Ignore
+          }
+          setUser(null);
+          return;
+        }
+
+        const nextUser: UserSession = {
+          ...currentUser,
+          usuario: freshUser.usuario,
+          rol: freshUser.rol,
+          contratista: freshUser.contratista,
+          nombre_mostrar: freshUser.nombre_mostrar,
+          grupo: freshUser.grupo,
+          ...(typeof freshUser.ver_historico === 'boolean'
+            ? { ver_historico: freshUser.ver_historico }
+            : {}),
+        };
+
+        const sessionChanged =
+          nextUser.usuario !== currentUser.usuario ||
+          nextUser.rol !== currentUser.rol ||
+          nextUser.contratista !== currentUser.contratista ||
+          nextUser.nombre_mostrar !== currentUser.nombre_mostrar ||
+          nextUser.grupo !== currentUser.grupo ||
+          nextUser.ver_historico !== currentUser.ver_historico;
+
+        if (sessionChanged) {
+          setUser(nextUser);
+          try {
+            sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextUser));
+          } catch {
+            // Ignore storage errors
+          }
+
+          if (nextUser.grupo !== currentUser.grupo || nextUser.rol !== currentUser.rol) {
+            const nextAllowed = parseUserGroups(
+              nextUser.grupo,
+              nextUser.rol === 'ADMIN' ? 'ALL' : 'BT',
+            );
+            setAdminGroupFilter(nextAllowed.length === 1 ? nextAllowed[0] : 'ALL');
+            setAdminSelectedContrata('ALL');
+          }
+
+          if (
+            typeof freshUser.ver_historico === 'boolean' &&
+            nextUser.ver_historico !== currentUser.ver_historico
+          ) {
+            setIsHistoryUnlocked(shouldUnlockHistoryByDefault(nextUser));
+          }
+        }
+      }
     } catch {
       // Silencioso; cada tab maneja su feedback si falla y se conserva el caché hidratado
     }
-  }, [user?.rol]);
+  }, []);
 
   useEffect(() => {
-    if (user) {
+    if (user?.usuario) {
       void loadBootstrapData();
     }
-  }, [user, loadBootstrapData]);
+  }, [user?.usuario, user?.rol, loadBootstrapData]);
 
   const fetchAdminTurns = useCallback(
     async (fecha: string, force = false) => {

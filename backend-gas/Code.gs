@@ -151,6 +151,7 @@ function doGet(e) {
             contratista: u.contratista,
             nombre_mostrar: u.nombre_mostrar,
             grupo: grupoValue,
+            ver_historico: String(u.ver_historico || '').trim().toUpperCase() === 'TRUE',
           };
         });
       return jsonResponse({ ok: true, users });
